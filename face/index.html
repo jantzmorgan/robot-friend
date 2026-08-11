@@ -2323,16 +2323,8 @@ if (
             lastWakeCounter =
                 data.wake_counter;
 
-            /*
-                Python owns the full voice turn now. This avoids the
-                unreliable Windows handoff to browser speech recognition.
-            */
-            conversationMode =
-                false;
 
-            setExpression(
-                data.mode === "thinking" ? "thinking" : "curious"
-            );
+            handleWakeWord();
         }
 
 
