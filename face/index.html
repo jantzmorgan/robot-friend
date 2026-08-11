@@ -2415,12 +2415,16 @@ async function handleWakeWord() {
     }
 
 
+    /*
+        Python owns the post-wake microphone turn. It records the command,
+        transcribes it, runs the brain/color logic, speaks, and resumes the
+        wake listener. Do not start browser recognition here or Windows will
+        have two microphone systems competing again.
+    */
+
     await wait(
         100
     );
-
-
-    startListening();
 }
 
 
