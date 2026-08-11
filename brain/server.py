@@ -194,7 +194,9 @@ def handle_wake_word() -> None:
         listening=True,
     )
     if wake_listener is not None:
-        wake_listener.pause()
+        # This callback runs on the listener thread, so it must not wait for
+        # that same thread to acknowledge the pause.
+        wake_listener.pause(wait=False)
 
 
 def start_wake_word() -> None:
