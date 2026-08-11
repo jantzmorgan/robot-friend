@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import queue
 import json
-import threading
 import urllib.request
 
 from robot.interfaces import (
@@ -99,45 +98,6 @@ class SimulatedAudioOutput(AudioOutputDriver):
 
     def stop(self) -> None:
         pass
-
-
-class OpenAIAudioOutput(AudioOutputDriver):
-    """Stream OpenAI PCM speech through the Windows/default system speaker."""
-
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini-tts",
-                 voice: str = "onyx") -> None:
-        from openai import OpenAI
-        self.client = OpenAI(api_key=api_key)
-        self.model, self.voice = model, voice
-        self._stop_event = threading.Event()
-        self._playback_lock = threading.Lock()
-
-    def speak(self, text: str) -> None:
-        import pyaudio
-        self._stop_event.clear()
-        with self._playback_lock:
-            audio = pyaudio.PyAudio()
-            stream = audio.open(
-                format=pyaudio.paInt16, channels=1, rate=24000, output=True,
-            )
-            try:
-                with self.client.audio.speech.with_streaming_response.create(
-                    model=self.model,
-                    voice=self.voice,
-                    input=text,
-                    response_format="pcm",
-                ) as response:
-                    for chunk in response.iter_bytes(chunk_size=4096):
-                        if self._stop_event.is_set():
-                            break
-                        stream.write(chunk)
-            finally:
-                stream.stop_stream()
-                stream.close()
-                audio.terminate()
-
-    def stop(self) -> None:
-        self._stop_event.set()
 
 
 class KokoroAudioOutput(AudioOutputDriver):
