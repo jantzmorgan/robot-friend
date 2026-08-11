@@ -99,10 +99,13 @@ class RobotRuntime:
         self.state.update(expression=expression)
 
     def speak(self, text: str) -> None:
-        # Physical audio drivers report the actual playback boundary through
-        # /speech/event. Marking "speaking" here would animate during synthesis,
-        # before a sample has reached the speaker.
-        self.audio_output.speak(text)
+        # Audio drivers are synchronous: this state brackets synthesis/playback
+        # so the browser mouth follows the real speech call.
+        self.state.update(speaking=True, mode="speaking")
+        try:
+            self.audio_output.speak(text)
+        finally:
+            self.state.update(speaking=False, mode="idle")
 
     def close(self) -> None:
         self._shutdown.set()
