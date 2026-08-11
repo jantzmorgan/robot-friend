@@ -36,9 +36,11 @@ Invoke-RestMethod http://127.0.0.1:8000/safety/reset -Method Post
 
 ## Existing local voice
 
-Start the existing Kokoro service as before, then set `ROBOT_AUDIO=kokoro` in
-`.env`. Otherwise speech is logged through the simulator, making Windows work
-without a microphone or speaker.
+`ROBOT_AUDIO=auto` (the default) streams OpenAI speech through the Windows
+default speaker when `OPENAI_API_KEY` is configured. Set `ROBOT_VOICE` to an
+OpenAI voice name such as `onyx`. To use the existing local service instead,
+start Kokoro/Fenrir and set `ROBOT_AUDIO=kokoro`. Use `ROBOT_AUDIO=silent` only
+for intentionally silent development runs.
 
 ## Architecture
 
