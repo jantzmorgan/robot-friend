@@ -1,8 +1,5 @@
-import audioop
-import io
 import threading
 import time
-import wave
 
 import numpy as np
 import pyaudio
@@ -190,82 +187,6 @@ class WakeWordListener:
 
         self.pause_complete.clear()
         self.pause_requested.clear()
-
-
-    # ========================================================
-    # RECORD POST-WAKE COMMAND
-    # ========================================================
-
-    def record_command(self, max_seconds=10.0, silence_seconds=1.15):
-        """Capture one spoken command after the wake stream has released the mic."""
-        if threading.current_thread() is self.thread:
-            raise RuntimeError("record_command must run outside the wake listener thread")
-
-        self.pause(wait=True)
-        if not self.pause_complete.is_set():
-            raise RuntimeError("Wake microphone did not release in time")
-
-        command_stream = None
-        frames = []
-        heard_speech = False
-        silent_chunks = 0
-        ambient_levels = []
-        calibration_chunks = max(1, int(0.35 * RATE / CHUNK))
-        max_chunks = max(1, int(max_seconds * RATE / CHUNK))
-        silence_chunks_needed = max(1, int(silence_seconds * RATE / CHUNK))
-
-        try:
-            command_stream = self.audio.open(
-                format=pyaudio.paInt16,
-                channels=CHANNELS,
-                rate=RATE,
-                input=True,
-                frames_per_buffer=CHUNK,
-            )
-            print("Listening for command...")
-
-            for index in range(max_chunks):
-                raw_audio = command_stream.read(CHUNK, exception_on_overflow=False)
-                frames.append(raw_audio)
-                level = audioop.rms(raw_audio, 2)
-
-                if index < calibration_chunks:
-                    ambient_levels.append(level)
-                    continue
-
-                ambient = sum(ambient_levels) / max(1, len(ambient_levels))
-                speech_threshold = max(250, ambient * 2.8)
-
-                if level >= speech_threshold:
-                    heard_speech = True
-                    silent_chunks = 0
-                elif heard_speech:
-                    silent_chunks += 1
-                    if silent_chunks >= silence_chunks_needed:
-                        break
-
-            if not heard_speech:
-                return None
-
-            output = io.BytesIO()
-            with wave.open(output, "wb") as wav_file:
-                wav_file.setnchannels(CHANNELS)
-                wav_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
-                wav_file.setframerate(RATE)
-                wav_file.writeframes(b"".join(frames))
-            return output.getvalue()
-
-        finally:
-            if command_stream is not None:
-                try:
-                    if command_stream.is_active():
-                        command_stream.stop_stream()
-                except Exception:
-                    pass
-                try:
-                    command_stream.close()
-                except Exception:
-                    pass
 
 
     # ========================================================
