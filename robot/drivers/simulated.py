@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import queue
 import json
+import os
+import tempfile
 import urllib.request
 
 from robot.interfaces import (
@@ -122,3 +124,44 @@ class KokoroAudioOutput(AudioOutputDriver):
             self._post("/stop", {})
         except Exception:
             log.exception("Could not stop Kokoro speech")
+
+
+class OpenAIAudioOutput(AudioOutputDriver):
+    """Generate a WAV reply with OpenAI and play it through Windows speakers."""
+
+    def __init__(self, api_key: str, *, model: str = "gpt-4o-mini-tts",
+                 voice: str = "coral") -> None:
+        self.api_key = api_key
+        self.model = model
+        self.voice = voice
+
+    def speak(self, text: str) -> None:
+        if os.name != "nt":
+            raise RuntimeError("OpenAI PC speech playback currently requires Windows")
+
+        import winsound
+        from openai import OpenAI
+
+        path = ""
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
+                path = wav_file.name
+            response = OpenAI(api_key=self.api_key).audio.speech.create(
+                model=self.model,
+                voice=self.voice,
+                input=text,
+                response_format="wav",
+            )
+            response.write_to_file(path)
+            winsound.PlaySound(path, winsound.SND_FILENAME)
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    log.warning("Could not remove temporary speech file: %s", path)
+
+    def stop(self) -> None:
+        if os.name == "nt":
+            import winsound
+            winsound.PlaySound(None, 0)
