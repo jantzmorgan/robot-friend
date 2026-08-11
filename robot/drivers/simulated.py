@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import queue
 import json
 import os
-import tempfile
+import threading
 import urllib.request
+import wave
 
 from robot.interfaces import (
     AudioInputDriver, AudioOutputDriver, CameraDriver, DisplayDriver,
@@ -127,41 +129,50 @@ class KokoroAudioOutput(AudioOutputDriver):
 
 
 class OpenAIAudioOutput(AudioOutputDriver):
-    """Generate a WAV reply with OpenAI and play it through Windows speakers."""
+    """Generate a WAV reply with OpenAI and stream it to Windows speakers."""
 
     def __init__(self, api_key: str, *, model: str = "gpt-4o-mini-tts",
                  voice: str = "coral") -> None:
         self.api_key = api_key
         self.model = model
         self.voice = voice
+        self._stop_requested = threading.Event()
 
     def speak(self, text: str) -> None:
         if os.name != "nt":
             raise RuntimeError("OpenAI PC speech playback currently requires Windows")
 
-        import winsound
+        import pyaudio
         from openai import OpenAI
 
-        path = ""
+        self._stop_requested.clear()
+        response = OpenAI(api_key=self.api_key).audio.speech.create(
+            model=self.model,
+            voice=self.voice,
+            input=text,
+            response_format="wav",
+        )
+        wav_bytes = response.content
+        player = pyaudio.PyAudio()
+        stream = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
-                path = wav_file.name
-            response = OpenAI(api_key=self.api_key).audio.speech.create(
-                model=self.model,
-                voice=self.voice,
-                input=text,
-                response_format="wav",
-            )
-            response.write_to_file(path)
-            winsound.PlaySound(path, winsound.SND_FILENAME)
+            with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+                stream = player.open(
+                    format=player.get_format_from_width(wav_file.getsampwidth()),
+                    channels=wav_file.getnchannels(),
+                    rate=wav_file.getframerate(),
+                    output=True,
+                )
+                while not self._stop_requested.is_set():
+                    frames = wav_file.readframes(2048)
+                    if not frames:
+                        break
+                    stream.write(frames)
         finally:
-            if path:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    log.warning("Could not remove temporary speech file: %s", path)
+            if stream is not None:
+                stream.stop_stream()
+                stream.close()
+            player.terminate()
 
     def stop(self) -> None:
-        if os.name == "nt":
-            import winsound
-            winsound.PlaySound(None, 0)
+        self._stop_requested.set()
