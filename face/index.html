@@ -1,0 +1,3614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Robot Friend Face</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    html,
+    body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+    }
+
+    body {
+        cursor: none;
+    }
+
+    canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+    }
+
+    body.pixel-face canvas {
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+    }
+
+    body.pixel-face::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+        background:
+            radial-gradient(
+                ellipse at 50% 48%,
+                rgb(var(--face-glow-rgb) / 0.035) 0 30%,
+                rgba(0,0,0,0.08) 58%,
+                rgba(0,0,0,0.72) 88%,
+                #000 100%
+            );
+    }
+
+    body.pixel-face::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 3;
+        background-image: radial-gradient(
+            circle,
+            rgba(0,0,0,0) 0 44%,
+            rgba(0,0,0,0.72) 49% 100%
+        );
+        background-size: var(--pixel-size) var(--pixel-size);
+        background-position: center;
+        mix-blend-mode: multiply;
+    }
+
+    body.pixel-face #debug {
+        display: none;
+    }
+
+    #debug {
+        position: fixed;
+        left: 18px;
+        bottom: 14px;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+        color: rgba(255,255,255,0.18);
+        pointer-events: none;
+    }
+</style>
+</head>
+
+<body>
+
+<canvas id="faceCanvas"></canvas>
+
+<div id="debug">
+0 NORMAL · 1 HAPPY · 2 CURIOUS · 3 SURPRISED · 4 ANNOYED ·
+5 THINKING · 6 SLEEP · 7 EXCITED · 8 SAD · SPACE BLINK
+</div>
+
+<script>
+
+/* ============================================================
+   ROBOT FRIEND FACE ENGINE v0.4
+   ============================================================ */
+
+
+/* ============================================================
+   SETTINGS
+   ============================================================ */
+
+const SETTINGS = {
+
+    color: "#FFB43B",
+
+    background: "#000000",
+
+    glowStrength: 20,
+
+    eyeWidth: 135,
+
+    eyeHeight: 100,
+
+    eyeGap: 245,
+
+    cornerCut: 17,
+
+    gazeDistanceX: 48,
+
+    gazeDistanceY: 26,
+
+    // Mouth sits noticeably below the eyes
+    mouthOffsetY: 125,
+
+    mouthThickness: 13,
+
+    mouthWidth: 110
+};
+
+
+/* ============================================================
+   CANVAS
+   ============================================================ */
+
+const canvas = document.getElementById("faceCanvas");
+const ctx = canvas.getContext("2d");
+
+const FACE_STYLE =
+    new URLSearchParams(window.location.search).get("face") || "pixel";
+
+let faceTheme =
+    new URLSearchParams(window.location.search).get("theme") || "herman";
+
+let faceColors =
+    faceTheme === "blue"
+        ? ["#55CFFF"]
+        : faceTheme === "multicolor"
+            ? ["#42E8FF", "#7B8CFF", "#FF4FC8"]
+            : ["#FF5A2D"];
+
+let faceEffect =
+    "auto";
+
+const PIXEL_MODE =
+    FACE_STYLE !== "classic";
+
+const PIXEL_COLUMNS =
+    96;
+
+document.body.classList.toggle(
+    "pixel-face",
+    PIXEL_MODE
+);
+
+if (PIXEL_MODE) {
+    SETTINGS.color = faceColors[0];
+    SETTINGS.glowStrength = 13;
+    SETTINGS.eyeWidth = 105;
+    SETTINGS.eyeHeight = 55;
+    SETTINGS.eyeGap = 270;
+    SETTINGS.cornerCut = 13;
+    SETTINGS.gazeDistanceX = 34;
+    SETTINGS.gazeDistanceY = 18;
+    SETTINGS.mouthOffsetY = 102;
+    SETTINGS.mouthThickness = 8;
+} else {
+    SETTINGS.color =
+        "#6EDCFF";
+}
+
+function applyFaceColors(colors, theme = faceTheme) {
+    if (!PIXEL_MODE || !Array.isArray(colors) || !colors.length) return;
+
+    faceTheme = theme;
+    faceColors = colors.slice(0, 4);
+    SETTINGS.color = faceColors[0];
+
+    const hex = faceColors[Math.floor((faceColors.length - 1) / 2)].replace("#", "");
+    document.documentElement.style.setProperty(
+        "--face-glow-rgb",
+        `${parseInt(hex.slice(0, 2), 16)} ${parseInt(hex.slice(2, 4), 16)} ${parseInt(hex.slice(4, 6), 16)}`
+    );
+}
+
+applyFaceColors(faceColors, faceTheme);
+
+function resizeCanvas() {
+
+    const dpr = PIXEL_MODE ? 1 : (window.devicePixelRatio || 1);
+
+    canvas.width = PIXEL_MODE
+        ? PIXEL_COLUMNS
+        : window.innerWidth * dpr;
+
+    canvas.height = PIXEL_MODE
+        ? Math.max(48, Math.round(PIXEL_COLUMNS * window.innerHeight / window.innerWidth))
+        : window.innerHeight * dpr;
+
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+
+    const scaleX = PIXEL_MODE
+        ? canvas.width / window.innerWidth
+        : dpr;
+
+    const scaleY = PIXEL_MODE
+        ? canvas.height / window.innerHeight
+        : dpr;
+
+    ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+
+    document.documentElement.style.setProperty(
+        "--pixel-size",
+        `${window.innerWidth / PIXEL_COLUMNS}px`
+    );
+}
+
+window.addEventListener("resize", resizeCanvas);
+
+resizeCanvas();
+
+
+/* ============================================================
+   FACE STATE
+   ============================================================ */
+
+const face = {
+
+    expression: "normal",
+
+    gazeX: 0,
+    gazeY: 0,
+
+    targetGazeX: 0,
+    targetGazeY: 0,
+
+    blinkAmount: 0,
+
+    blinking: false,
+
+    sleeping: false,
+
+    mouthTalkAmount: 0,
+
+    lastUserActivity: Date.now(),
+
+    idleBehaviorRunning: false,
+
+    expressionBlend: 1,
+
+    previousExpression: "normal",
+
+    transitioningExpression: false,
+
+    speaking: false,
+
+    mouthTalkAmount: 0
+};
+
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+
+function lerp(a, b, t) {
+    return a + (b - a) * t;
+}
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function setGlow() {
+
+    applyFacePaint();
+
+    ctx.shadowColor = (
+        PIXEL_MODE && faceColors.length > 1
+    ) ? faceColors[Math.floor(faceColors.length / 2)] : SETTINGS.color;
+    ctx.shadowBlur = SETTINGS.glowStrength;
+}
+
+function applyFacePaint() {
+
+    if (
+        PIXEL_MODE &&
+        faceColors.length > 1 || faceTheme === "rainbow"
+    ) {
+
+        const gradient = ctx.createLinearGradient(
+            window.innerWidth * 0.28,
+            0,
+            window.innerWidth * 0.72,
+            0
+        );
+
+        if (faceTheme === "rainbow") {
+            const offset = (performance.now() / 35) % 360;
+            for (let index = 0; index <= 6; index += 1) {
+                gradient.addColorStop(
+                    index / 6,
+                    `hsl(${(offset + index * 60) % 360} 100% 66%)`
+                );
+            }
+        } else {
+            faceColors.forEach(
+                (color, index) => gradient.addColorStop(
+                    index / Math.max(1, faceColors.length - 1),
+                    color
+                )
+            );
+        }
+
+        ctx.fillStyle = gradient;
+        ctx.strokeStyle = gradient;
+        ctx.shadowColor = faceColors[Math.floor(faceColors.length / 2)];
+
+    } else {
+
+        ctx.fillStyle = SETTINGS.color;
+        ctx.strokeStyle = SETTINGS.color;
+    }
+}
+
+function clearGlow() {
+    ctx.shadowBlur = 0;
+}
+
+
+/* ============================================================
+   BOXY EYE
+   ============================================================ */
+
+function drawEye(
+    x,
+    y,
+    width,
+    height,
+    options = {}
+) {
+
+    const {
+    tilt = 0,
+    squash = 1,
+    stretch = 1,
+    yOffset = 0
+} = options;
+
+
+/*
+    Smooth expression transition.
+
+    Instead of instantly jumping to the
+    new dimensions, the eye grows into them.
+*/
+
+const blend =
+    face.expressionBlend;
+
+const animatedTilt =
+    tilt *
+    blend;
+
+const animatedSquash =
+    1 +
+    (
+        squash -
+        1
+    ) *
+    blend;
+
+const animatedStretch =
+    1 +
+    (
+        stretch -
+        1
+    ) *
+    blend;
+
+const animatedYOffset =
+    yOffset *
+    blend;
+
+    ctx.save();
+
+    ctx.translate(
+    x,
+    y + animatedYOffset
+);
+
+ctx.rotate(
+    animatedTilt
+);
+
+const finalWidth =
+    width *
+    animatedStretch;
+
+const finalHeight =
+    Math.max(
+        5,
+        height *
+        animatedSquash *
+        (1 - face.blinkAmount)
+    );
+
+    const cut =
+        Math.min(
+            SETTINGS.cornerCut,
+            finalWidth * 0.2,
+            finalHeight * 0.28
+        );
+
+    const left =
+        -finalWidth / 2;
+
+    const right =
+        finalWidth / 2;
+
+    const top =
+        -finalHeight / 2;
+
+    const bottom =
+        finalHeight / 2;
+
+
+    ctx.beginPath();
+
+    ctx.moveTo(left + cut, top);
+    ctx.lineTo(right - cut, top);
+
+    ctx.lineTo(right, top + cut);
+    ctx.lineTo(right, bottom - cut);
+
+    ctx.lineTo(right - cut, bottom);
+    ctx.lineTo(left + cut, bottom);
+
+    ctx.lineTo(left, bottom - cut);
+    ctx.lineTo(left, top + cut);
+
+    ctx.closePath();
+
+    setGlow();
+
+    ctx.fill();
+
+    clearGlow();
+
+    applyFacePaint();
+    ctx.fill();
+
+    ctx.restore();
+}
+
+
+/* ============================================================
+   MOUTH SEGMENTS
+   ============================================================ */
+
+function drawSegment(
+    x,
+    y,
+    width,
+    height
+) {
+
+    ctx.save();
+
+    setGlow();
+
+    ctx.fillRect(
+        x - width / 2,
+        y - height / 2,
+        width,
+        height
+    );
+
+    clearGlow();
+
+    applyFacePaint();
+
+    ctx.fillRect(
+        x - width / 2,
+        y - height / 2,
+        width,
+        height
+    );
+
+    ctx.restore();
+}
+
+
+/* ============================================================
+   MOUTHS
+   ============================================================ */
+
+function drawNormalMouth(x, y) {
+
+    drawSegment(
+        x,
+        y,
+        78,
+        SETTINGS.mouthThickness
+    );
+}
+
+
+function drawHappyMouth(x, y) {
+
+    const t =
+        SETTINGS.mouthThickness;
+
+    drawSegment(
+        x,
+        y + 18,
+        68,
+        t
+    );
+
+    drawSegment(
+        x - 42,
+        y + 7,
+        28,
+        t
+    );
+
+    drawSegment(
+        x + 42,
+        y + 7,
+        28,
+        t
+    );
+
+    drawSegment(
+        x - 55,
+        y - 5,
+        t,
+        28
+    );
+
+    drawSegment(
+        x + 55,
+        y - 5,
+        t,
+        28
+    );
+}
+
+
+function drawSmallSmile(x, y) {
+
+    const t =
+        SETTINGS.mouthThickness;
+
+    drawSegment(
+        x,
+        y + 10,
+        48,
+        t
+    );
+
+    drawSegment(
+        x - 30,
+        y,
+        t,
+        24
+    );
+
+    drawSegment(
+        x + 30,
+        y,
+        t,
+        24
+    );
+}
+
+
+function drawFlatMouth(x, y) {
+
+    drawSegment(
+        x,
+        y,
+        72,
+        SETTINGS.mouthThickness
+    );
+}
+
+
+function drawOpenMouth(x, y) {
+
+    const t =
+        SETTINGS.mouthThickness;
+
+    const width = 55;
+    const height = 48;
+
+    drawSegment(
+        x,
+        y - height / 2,
+        width,
+        t
+    );
+
+    drawSegment(
+        x,
+        y + height / 2,
+        width,
+        t
+    );
+
+    drawSegment(
+        x - width / 2,
+        y,
+        t,
+        height
+    );
+
+    drawSegment(
+        x + width / 2,
+        y,
+        t,
+        height
+    );
+}
+
+
+function drawTinyOpenMouth(x, y) {
+
+    const t =
+        10;
+
+    drawSegment(
+        x,
+        y,
+        24,
+        24
+    );
+
+    ctx.save();
+
+    ctx.fillStyle =
+        SETTINGS.background;
+
+    ctx.shadowBlur = 0;
+
+    ctx.fillRect(
+        x - 6,
+        y - 6,
+        12,
+        12
+    );
+
+    ctx.restore();
+}
+
+
+function drawSadMouth(x, y) {
+
+    const t =
+        SETTINGS.mouthThickness;
+
+    drawSegment(
+        x,
+        y - 12,
+        58,
+        t
+    );
+
+    drawSegment(
+        x - 38,
+        y,
+        t,
+        24
+    );
+
+    drawSegment(
+        x + 38,
+        y,
+        t,
+        24
+    );
+}
+
+function drawTalkingMouth(x, y) {
+
+    const amount =
+        face.mouthTalkAmount;
+
+    const t =
+        SETTINGS.mouthThickness;
+
+
+    /*
+        QUIET / almost closed
+    */
+
+    if (amount < 0.28) {
+
+        drawSegment(
+            x,
+            y,
+            58,
+            t
+        );
+
+        return;
+    }
+
+
+    /*
+        SMALL OPEN MOUTH
+    */
+
+    if (amount < 0.58) {
+
+        const width =
+            52;
+
+        const height =
+            30;
+
+        drawSegment(
+            x,
+            y - height / 2,
+            width,
+            t
+        );
+
+        drawSegment(
+            x,
+            y + height / 2,
+            width,
+            t
+        );
+
+        drawSegment(
+            x - width / 2,
+            y,
+            t,
+            height
+        );
+
+        drawSegment(
+            x + width / 2,
+            y,
+            t,
+            height
+        );
+
+        return;
+    }
+
+
+    /*
+        BIGGER OPEN MOUTH
+    */
+
+    const width =
+        68;
+
+    const height =
+        46;
+
+    drawSegment(
+        x,
+        y - height / 2,
+        width,
+        t
+    );
+
+    drawSegment(
+        x,
+        y + height / 2,
+        width,
+        t
+    );
+
+    drawSegment(
+        x - width / 2,
+        y,
+        t,
+        height
+    );
+
+    drawSegment(
+        x + width / 2,
+        y,
+        t,
+        height
+    );
+}
+
+function drawThinkingMouth(x, y) {
+
+    const t =
+        SETTINGS.mouthThickness;
+
+    // Small crooked "hmm" mouth
+    drawSegment(
+        x - 18,
+        y,
+        34,
+        t
+    );
+
+    drawSegment(
+        x + 17,
+        y - 8,
+        22,
+        t
+    );
+}
+
+
+/* ============================================================
+   DRAW FACE
+   ============================================================ */
+
+function drawFace() {
+
+    ctx.fillStyle =
+        SETTINGS.background;
+
+    ctx.fillRect(
+        0,
+        0,
+        window.innerWidth,
+        window.innerHeight
+    );
+
+
+    const centerX =
+        window.innerWidth / 2;
+
+    const centerY =
+        window.innerHeight / 2 - 35;
+
+
+    const leftBaseX =
+        centerX -
+        SETTINGS.eyeGap / 2;
+
+    const rightBaseX =
+        centerX +
+        SETTINGS.eyeGap / 2;
+
+
+    const gazeX =
+        face.gazeX *
+        SETTINGS.gazeDistanceX;
+
+    const gazeY =
+        face.gazeY *
+        SETTINGS.gazeDistanceY;
+
+
+    let leftOptions = {};
+
+let rightOptions = {};
+
+let mouthType =
+    "normal";
+
+
+/*
+    GAZE PERSONALITY
+
+    Since he has no pupils, the eyes themselves
+    subtly lean and compress in the direction
+    he's looking.
+
+    This makes gaze much easier to read.
+*/
+
+const gazeLean =
+    face.gazeX * 0.055;
+
+const gazeSquash =
+    1 -
+    Math.abs(face.gazeX) * 0.08;
+
+const gazeVerticalSquash =
+    1 -
+    Math.abs(face.gazeY) * 0.05;
+
+
+    /* ========================================================
+       EXPRESSIONS
+       ======================================================== */
+
+    switch (face.expression) {
+
+
+        /* ----------------------------------------------------
+           NORMAL
+           ---------------------------------------------------- */
+
+        case "normal":
+
+            leftOptions = {
+                squash: 1,
+                stretch: 1
+            };
+
+            rightOptions = {
+                squash: 1,
+                stretch: 1
+            };
+
+            mouthType =
+                "normal";
+
+            break;
+
+
+        /* ----------------------------------------------------
+           HAPPY
+           Slight squint + obvious smile
+           ---------------------------------------------------- */
+
+        case "happy":
+
+            leftOptions = {
+                squash: 0.62,
+                stretch: 1.08,
+                tilt: -0.07,
+                yOffset: 6
+            };
+
+            rightOptions = {
+                squash: 0.62,
+                stretch: 1.08,
+                tilt: 0.07,
+                yOffset: 6
+            };
+
+            mouthType =
+                "happy";
+
+            break;
+
+
+        /* ----------------------------------------------------
+           CURIOUS
+           Asymmetrical but still cute
+           ---------------------------------------------------- */
+
+        case "curious":
+
+            leftOptions = {
+                squash: 1,
+                stretch: 0.92,
+                tilt: -0.07,
+                yOffset: -6
+            };
+
+            rightOptions = {
+                squash: 0.82,
+                stretch: 1.05,
+                tilt: 0.08,
+                yOffset: 5
+            };
+
+            mouthType =
+                "smallSmile";
+
+            break;
+
+
+        /* ----------------------------------------------------
+           SURPRISED
+           Tall eyes + little open mouth
+           ---------------------------------------------------- */
+
+        case "surprised":
+
+            leftOptions = {
+                squash: 1.35,
+                stretch: 0.72
+            };
+
+            rightOptions = {
+                squash: 1.35,
+                stretch: 0.72
+            };
+
+            mouthType =
+                "open";
+
+            break;
+
+
+        /* ----------------------------------------------------
+           ANNOYED
+           Heavy squint + flat mouth
+           ---------------------------------------------------- */
+
+        case "annoyed":
+
+            leftOptions = {
+                squash: 0.48,
+                stretch: 1.05,
+                tilt: 0.11
+            };
+
+            rightOptions = {
+                squash: 0.48,
+                stretch: 1.05,
+                tilt: -0.11
+            };
+
+            mouthType =
+                "flat";
+
+            break;
+
+
+        /* ----------------------------------------------------
+           THINKING
+           One eye smaller / offset + dots
+           ---------------------------------------------------- */
+
+        case "thinking":
+
+            leftOptions = {
+                squash: 0.78,
+                stretch: 1.00,
+                tilt: -0.03,
+                yOffset: 3
+            };
+
+            rightOptions = {
+                squash: 0.88,
+                stretch: 0.94,
+                tilt: 0.05,
+                yOffset: -7
+            };
+
+            mouthType =
+                "thinking";
+
+            break;
+
+    
+        /* ----------------------------------------------------
+           SLEEP
+           Simple clean lines
+           ---------------------------------------------------- */
+
+        case "sleeping":
+
+            leftOptions = {
+                squash: 0.08,
+                stretch: 1.12
+            };
+
+            rightOptions = {
+                squash: 0.08,
+                stretch: 1.12
+            };
+
+            mouthType =
+                "flat";
+
+            break;
+
+
+        /* ----------------------------------------------------
+           EXCITED
+           Big bright eyes + giant smile
+           ---------------------------------------------------- */
+
+        case "excited":
+
+            leftOptions = {
+                squash: 1.15,
+                stretch: 1.12,
+                tilt: -0.03
+            };
+
+            rightOptions = {
+                squash: 1.15,
+                stretch: 1.12,
+                tilt: 0.03
+            };
+
+            mouthType =
+                "happy";
+
+            break;
+
+
+        /* ----------------------------------------------------
+           SAD
+           Droopy inward eyes + upside-down mouth
+           ---------------------------------------------------- */
+
+        case "sad":
+
+            leftOptions = {
+                squash: 0.72,
+                stretch: 0.96,
+                tilt: -0.09,
+                yOffset: 7
+            };
+
+            rightOptions = {
+                squash: 0.72,
+                stretch: 0.96,
+                tilt: 0.09,
+                yOffset: 7
+            };
+
+            mouthType =
+                "sad";
+
+            break;
+    }
+
+
+    /* ========================================================
+       DRAW EYES
+       ======================================================== */
+
+    drawEye(
+    leftBaseX + gazeX,
+    centerY + gazeY,
+    SETTINGS.eyeWidth,
+    SETTINGS.eyeHeight,
+    {
+        ...leftOptions,
+
+        tilt:
+            (leftOptions.tilt || 0) +
+            gazeLean,
+
+        squash:
+            (leftOptions.squash || 1) *
+            gazeSquash *
+            gazeVerticalSquash
+    }
+);
+
+drawEye(
+    rightBaseX + gazeX,
+    centerY + gazeY,
+    SETTINGS.eyeWidth,
+    SETTINGS.eyeHeight,
+    {
+        ...rightOptions,
+
+        tilt:
+            (rightOptions.tilt || 0) +
+            gazeLean,
+
+        squash:
+            (rightOptions.squash || 1) *
+            gazeSquash *
+            gazeVerticalSquash
+    }
+);
+
+
+    /* ========================================================
+       DRAW MOUTH LOWER THAN EYES
+       ======================================================== */
+
+    const mouthY =
+        centerY +
+        SETTINGS.mouthOffsetY;
+
+
+    if (PIXEL_MODE) {
+
+        drawPixelMouth(
+            face.speaking ? "talking" : mouthType,
+            centerX,
+            mouthY
+        );
+
+    } else if (face.speaking) {
+
+    drawTalkingMouth(
+        centerX,
+        mouthY
+    );
+
+} else {
+
+    switch (mouthType) {
+
+        case "happy":
+
+            drawHappyMouth(
+                centerX,
+                mouthY
+            );
+
+            break;
+
+
+        case "smallSmile":
+
+            drawSmallSmile(
+                centerX,
+                mouthY
+            );
+
+            break;
+
+
+        case "flat":
+
+            drawFlatMouth(
+                centerX,
+                mouthY
+            );
+
+            break;
+
+
+        case "open":
+
+            drawOpenMouth(
+                centerX,
+                mouthY
+            );
+
+            break;
+
+
+        case "sad":
+
+            drawSadMouth(
+                centerX,
+                mouthY
+            );
+
+            break;
+
+
+        case "thinking":
+
+            drawThinkingMouth(
+                centerX,
+                mouthY
+            );
+
+            break;
+
+
+        default:
+
+            drawNormalMouth(
+                centerX,
+                mouthY
+            );
+    }
+}
+}
+
+
+/* ============================================================
+   ANIMATION LOOP
+   ============================================================ */
+
+function drawEffectPixel(x, y, width, height, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 12;
+    ctx.fillRect(x - width / 2, y - height / 2, width, height);
+    ctx.restore();
+}
+
+function drawPixelEffects(now) {
+    if (!PIXEL_MODE) return;
+
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2 - 35;
+    const automatic = faceEffect === "auto";
+    const showFire = faceEffect === "fire" || (automatic && face.expression === "annoyed");
+    const showTears = faceEffect === "tears" || (automatic && face.expression === "sad");
+
+    if (showFire) {
+        const positions = [-245, -185, -120, -55, 20, 90, 165, 235];
+        positions.forEach((offset, index) => {
+            const flicker = (Math.sin(now * 0.012 + index * 1.7) + 1) / 2;
+            const height = 20 + flicker * 42;
+            const x = centerX + offset;
+            const y = centerY + 188 - height / 2;
+            drawEffectPixel(x, y, 13, height, index % 3 === 0 ? "#FFE14A" : "#FF5A2D");
+            if (height > 42) drawEffectPixel(x, y - height / 2 - 9, 8, 18, "#FFF3A0");
+        });
+    }
+
+    if (showTears) {
+        const drop = (now * 0.055) % 76;
+        const leftX = centerX - SETTINGS.eyeGap / 2 + face.gazeX * SETTINGS.gazeDistanceX;
+        const rightX = centerX + SETTINGS.eyeGap / 2 + face.gazeX * SETTINGS.gazeDistanceX;
+        [leftX, rightX].forEach((x, index) => {
+            drawEffectPixel(x, centerY + 50, 10, 34, "#48BFFF");
+            drawEffectPixel(x + (index ? 5 : -5), centerY + 75 + drop, 12, 17, "#8DE8FF");
+        });
+    }
+}
+
+function animate(now) {
+
+    face.gazeX =
+        lerp(
+            face.gazeX,
+            face.targetGazeX,
+            0.07
+        );
+
+    face.gazeY =
+        lerp(
+            face.gazeY,
+            face.targetGazeY,
+            0.07
+        );
+
+
+    /*
+        TALKING ANIMATION
+
+        Multiple sine waves make the mouth
+        movement irregular instead of looking
+        like a repeating machine cycle.
+    */
+
+    if (face.speaking) {
+
+        const fastWave =
+            Math.sin(
+                now * 0.018
+            );
+
+        const slowWave =
+            Math.sin(
+                now * 0.007
+            );
+
+        face.mouthTalkAmount =
+            clamp(
+                (
+                    fastWave * 0.35 +
+                    slowWave * 0.25 +
+                    0.55
+                ),
+                0,
+                1
+            );
+
+    } else {
+
+        face.mouthTalkAmount =
+            lerp(
+                face.mouthTalkAmount,
+                0,
+                0.18
+            );
+    }
+
+
+    drawFace();
+    drawPixelEffects(now);
+
+    requestAnimationFrame(
+        animate
+    );
+}
+
+animate();
+
+
+/* ============================================================
+   LOOK CONTROL
+   ============================================================ */
+
+function lookAt(x, y) {
+
+    face.targetGazeX =
+        clamp(
+            x,
+            -1,
+            1
+        );
+
+    face.targetGazeY =
+        clamp(
+            y,
+            -1,
+            1
+        );
+}
+
+
+/* ============================================================
+   MOUSE = TEMPORARY GAZE TEST
+   ============================================================ */
+
+document.addEventListener(
+    "mousemove",
+    event => {
+
+        face.lastUserActivity =
+            Date.now();
+
+        if (
+            face.sleeping ||
+            visionFaceFound
+        ) {
+            return;
+        }
+
+        const x =
+            (
+                event.clientX /
+                window.innerWidth
+            ) * 2 - 1;
+
+        const y =
+            (
+                event.clientY /
+                window.innerHeight
+            ) * 2 - 1;
+
+        lookAt(
+            x,
+            y
+        );
+    }
+);
+
+
+/* ============================================================
+   BLINK
+   ============================================================ */
+
+function blink() {
+
+    if (
+        face.blinking ||
+        face.sleeping
+    ) {
+        return;
+    }
+
+    face.blinking =
+        true;
+
+    const closeDuration =
+        75;
+
+    const openDuration =
+        115;
+
+    const start =
+        performance.now();
+
+
+    function closeBlink(now) {
+
+        const progress =
+            Math.min(
+                1,
+                (
+                    now -
+                    start
+                ) /
+                closeDuration
+            );
+
+        face.blinkAmount =
+            progress;
+
+
+        if (
+            progress <
+            1
+        ) {
+
+            requestAnimationFrame(
+                closeBlink
+            );
+
+        } else {
+
+            const openStart =
+                performance.now();
+
+
+            function openBlink(now2) {
+
+                const progress2 =
+                    Math.min(
+                        1,
+                        (
+                            now2 -
+                            openStart
+                        ) /
+                        openDuration
+                    );
+
+                face.blinkAmount =
+                    1 -
+                    progress2;
+
+
+                if (
+                    progress2 <
+                    1
+                ) {
+
+                    requestAnimationFrame(
+                        openBlink
+                    );
+
+                } else {
+
+                    face.blinkAmount =
+                        0;
+
+                    face.blinking =
+                        false;
+                }
+            }
+
+
+            requestAnimationFrame(
+                openBlink
+            );
+        }
+    }
+
+
+    requestAnimationFrame(
+        closeBlink
+    );
+}
+
+
+/* ============================================================
+   RANDOM NATURAL BLINKING
+   ============================================================ */
+
+function scheduleBlink() {
+
+    const delay =
+        2600 +
+        Math.random() *
+        4200;
+
+    setTimeout(
+        () => {
+
+            blink();
+
+            scheduleBlink();
+
+        },
+        delay
+    );
+}
+
+scheduleBlink();
+
+
+/* ============================================================
+   IDLE PERSONALITY
+   ============================================================ */
+
+function wait(ms) {
+
+    return new Promise(
+        resolve =>
+            setTimeout(
+                resolve,
+                ms
+            )
+    );
+}
+
+
+/*
+    Small double-blink.
+
+    This gives him a cute "huh?" reaction.
+*/
+
+async function doubleBlink() {
+
+    blink();
+
+    await wait(240);
+
+    blink();
+}
+
+
+/*
+    Behavior:
+    casually looks somewhere,
+    pauses,
+    then comes back.
+*/
+
+async function idleGlance() {
+
+    const positions = [
+
+        [-0.45, 0],
+
+        [0.45, 0],
+
+        [-0.22, -0.20],
+
+        [0.22, -0.20],
+
+        [0, 0.18]
+    ];
+
+    const choice =
+        positions[
+            Math.floor(
+                Math.random() *
+                positions.length
+            )
+        ];
+
+    lookAt(
+        choice[0],
+        choice[1]
+    );
+
+    await wait(
+        700 +
+        Math.random() *
+        700
+    );
+
+    lookAt(
+        0,
+        0
+    );
+}
+
+
+/*
+    Behavior:
+    he notices something,
+    looks at it,
+    becomes curious,
+    then goes back to normal.
+*/
+
+async function curiousMoment() {
+
+    lookAt(
+        Math.random() > 0.5
+            ? 0.45
+            : -0.45,
+        -0.08
+    );
+
+    await wait(500);
+
+    setExpression(
+        "curious"
+    );
+
+    await wait(1200);
+
+    setExpression(
+        "normal"
+    );
+
+    lookAt(
+        0,
+        0
+    );
+}
+
+
+/*
+    Behavior:
+    random tiny happy moment.
+
+    Like he remembered something funny.
+*/
+
+async function littleSmile() {
+
+    setExpression(
+        "happy"
+    );
+
+    await wait(750);
+
+    blink();
+
+    await wait(350);
+
+    setExpression(
+        "normal"
+    );
+}
+
+
+/*
+    Behavior:
+    brief "what was that?" response.
+*/
+
+async function noticeSomething() {
+
+    lookAt(
+        Math.random() > 0.5
+            ? 0.65
+            : -0.65,
+        -0.12
+    );
+
+    await wait(400);
+
+    await doubleBlink();
+
+    await wait(600);
+
+    lookAt(
+        0,
+        0
+    );
+}
+
+
+/*
+    Choose one little idle behavior.
+*/
+
+async function runIdleBehavior() {
+
+    if (
+        face.idleBehaviorRunning ||
+        face.sleeping ||
+        visionFaceFound ||
+        face.speaking ||
+        isListening
+    ) {
+        return;
+    }
+
+
+    /*
+        Don't start autonomous behavior
+        while the user is actively moving
+        the mouse around.
+    */
+
+    const timeSinceActivity =
+        Date.now() -
+        face.lastUserActivity;
+
+
+    if (
+        timeSinceActivity <
+        3000
+    ) {
+        return;
+    }
+
+
+    face.idleBehaviorRunning =
+        true;
+
+
+    const behaviors = [
+
+        idleGlance,
+
+        idleGlance,
+
+        idleGlance,
+
+        curiousMoment,
+
+        littleSmile,
+
+        noticeSomething
+    ];
+
+
+    const behavior =
+        behaviors[
+            Math.floor(
+                Math.random() *
+                behaviors.length
+            )
+        ];
+
+
+    try {
+
+        await behavior();
+
+    } finally {
+
+        face.idleBehaviorRunning =
+            false;
+    }
+}
+
+
+/*
+    Personality loop.
+
+    We intentionally DON'T run it on
+    a perfect clock.
+
+    Every few seconds he gets another
+    chance to do something.
+*/
+
+function scheduleIdlePersonality() {
+
+    const delay =
+        3200 +
+        Math.random() *
+        5000;
+
+
+    setTimeout(
+        async () => {
+
+            await runIdleBehavior();
+
+            scheduleIdlePersonality();
+
+        },
+        delay
+    );
+}
+
+
+scheduleIdlePersonality();
+
+
+/* ============================================================
+   EXPRESSION CONTROL
+   ============================================================ */
+
+function setExpression(expression) {
+
+    if (
+        expression === face.expression &&
+        !face.transitioningExpression
+    ) {
+        return;
+    }
+
+    face.previousExpression =
+        face.expression;
+
+    face.expression =
+        expression;
+
+    face.sleeping =
+        expression === "sleeping";
+
+    face.expressionBlend =
+        0;
+
+    face.transitioningExpression =
+        true;
+
+
+    if (face.sleeping) {
+
+        lookAt(
+            0,
+            0
+        );
+    }
+
+
+    if (expression === "thinking") {
+
+        lookAt(
+            0.18,
+            -0.22
+        );
+    }
+
+
+    const transitionDuration =
+        260;
+
+    const transitionStart =
+        performance.now();
+
+
+    function animateExpressionTransition(now) {
+
+        const progress =
+            Math.min(
+                1,
+                (
+                    now -
+                    transitionStart
+                ) /
+                transitionDuration
+            );
+
+
+        // Ease-out curve:
+        // quick at first, then gently settles.
+
+        face.expressionBlend =
+            1 -
+            Math.pow(
+                1 - progress,
+                3
+            );
+
+
+        if (progress < 1) {
+
+            requestAnimationFrame(
+                animateExpressionTransition
+            );
+
+        } else {
+
+            face.expressionBlend =
+                1;
+
+            face.transitioningExpression =
+                false;
+        }
+    }
+
+
+    requestAnimationFrame(
+        animateExpressionTransition
+    );
+}
+
+/* ============================================================
+   SPEECH TEST
+   ============================================================ */
+
+async function testTalking() {
+
+    if (face.speaking) {
+        return;
+    }
+
+
+    face.lastUserActivity =
+        Date.now();
+
+    face.speaking =
+        true;
+
+
+    /*
+        Slightly attentive expression
+        while speaking.
+    */
+
+    setExpression(
+        "normal"
+    );
+
+    lookAt(
+        0,
+        0
+    );
+
+
+    await wait(
+        4000
+    );
+
+
+    face.speaking =
+        false;
+}
+
+/* ============================================================
+   BRAIN CONNECTION
+   ============================================================ */
+
+const BRAIN_URL =
+    "http://127.0.0.1:8000";
+
+
+/* ============================================================
+   CONVERSATION STATE
+   ============================================================ */
+
+let lastWakeCounter =
+    0;
+
+
+let conversationMode =
+    false;
+
+
+let conversationTimeout =
+    null;
+
+
+let listenRetryCount =
+    0;
+
+
+const MAX_LISTEN_RETRIES =
+    20;
+
+
+const WAKE_COMMAND_WINDOW_MS =
+    12000;
+
+
+let listenWindowEndsAt =
+    0;
+
+
+let recognitionHadResult =
+    false;
+
+
+let recognitionHadError =
+    false;
+
+
+let recognitionRestartTimer =
+    null;
+
+
+let brainRequestActive =
+    false;
+
+
+/* ============================================================
+   CAMERA / VISION STATE
+   ============================================================ */
+
+let visionFaceFound =
+    false;
+
+
+let visionLastSeen =
+    0;
+
+
+/* ============================================================
+   SIMPLE SERVER HELPERS
+   ============================================================ */
+
+async function postRobotEndpoint(
+    endpoint,
+    body = {}
+) {
+
+    const response =
+        await fetch(
+            `${BRAIN_URL}${endpoint}`,
+            {
+                method:
+                    "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify(
+                        body
+                    )
+            }
+        );
+
+
+    let data = {};
+
+
+    try {
+
+        data =
+            await response.json();
+
+    } catch (error) {
+
+        data = {
+            error:
+                `Server returned HTTP ${response.status}`
+        };
+    }
+
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.error ||
+            `Request failed: ${response.status}`
+        );
+    }
+
+
+    return data;
+}
+
+
+/* ============================================================
+   CAMERA BRIDGE
+   Python detects a real face -> robot eyes follow it.
+   ============================================================ */
+
+async function checkVision() {
+
+    try {
+
+        const response =
+            await fetch(
+                `${BRAIN_URL}/vision`
+            );
+
+
+        if (!response.ok) {
+            return;
+        }
+
+
+        const data =
+            await response.json();
+
+
+        if (
+            data.camera_online &&
+            data.face_found
+        ) {
+
+            visionFaceFound =
+                true;
+
+
+            visionLastSeen =
+                Date.now();
+
+
+            /*
+                Slightly reduce movement.
+
+                Full [-1, 1] camera movement is
+                visually too aggressive for his face.
+            */
+
+            const x =
+                clamp(
+                    data.x * 0.75,
+                    -1,
+                    1
+                );
+
+
+            const y =
+                clamp(
+                    data.y * 0.55,
+                    -1,
+                    1
+                );
+
+
+            /*
+                Thinking has intentional gaze behavior.
+
+                Otherwise, look at the real person.
+            */
+
+            if (
+                face.expression !==
+                "thinking"
+            ) {
+
+                lookAt(
+                    x,
+                    y
+                );
+            }
+
+        } else {
+
+
+            /*
+                Give detection a tiny grace period.
+
+                Prevents his eyes from snapping away
+                if one camera frame temporarily misses
+                the face.
+            */
+
+            if (
+                Date.now() -
+                visionLastSeen >
+                600
+            ) {
+
+                visionFaceFound =
+                    false;
+            }
+        }
+
+
+    } catch (error) {
+
+        /*
+            Do not spam the browser console if
+            Python is restarting.
+        */
+    }
+}
+
+
+setInterval(
+    checkVision,
+    120
+);
+
+
+/* ============================================================
+   WAKE WORD BRIDGE
+   ============================================================ */
+
+async function checkWakeWord() {
+
+    try {
+
+        const response =
+            await fetch(
+                `${BRAIN_URL}/state`
+            );
+
+
+        if (!response.ok) {
+            return;
+        }
+
+
+        const data =
+            await response.json();
+
+        if (
+            PIXEL_MODE &&
+            Array.isArray(data.face_colors) &&
+            (
+                JSON.stringify(data.face_colors) !== JSON.stringify(faceColors) ||
+                data.face_theme !== faceTheme
+            )
+        ) {
+            applyFaceColors(data.face_colors, data.face_theme || "custom");
+        }
+
+        if (typeof data.face_effect === "string") {
+            faceEffect = data.face_effect;
+        }
+
+        /*
+    The Python brain now knows exactly when
+    Kokoro audio begins and ends.
+
+    Mouth movement follows real playback.
+*/
+
+if (
+    data.speaking &&
+    !face.speaking
+) {
+
+    face.speaking =
+        true;
+
+
+    setExpression(
+        "normal"
+    );
+}
+
+
+if (
+    !data.speaking &&
+    face.speaking
+) {
+
+    face.speaking =
+        false;
+}    
+
+
+        if (
+            data.wake_counter >
+            lastWakeCounter
+        ) {
+
+            lastWakeCounter =
+                data.wake_counter;
+
+
+            handleWakeWord();
+        }
+
+
+    } catch (error) {
+
+        /*
+            Python may simply be restarting.
+            No need to flood console.
+        */
+    }
+}
+
+
+setInterval(
+    checkWakeWord,
+    200
+);
+
+
+/* ============================================================
+   WAKE WORD DETECTED
+   ============================================================ */
+
+async function handleWakeWord() {
+
+
+    /*
+        Future-proof interruption.
+
+        If he is currently talking and hears
+        the wake phrase again, request that
+        Python stop the active TTS stream.
+    */
+
+    if (face.speaking) {
+
+        try {
+
+            await postRobotEndpoint(
+                "/speech/stop"
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Could not stop speech:",
+                error
+            );
+        }
+
+
+        face.speaking =
+            false;
+    }
+
+
+    face.lastUserActivity =
+        Date.now();
+
+
+    conversationMode =
+        true;
+
+
+    listenRetryCount =
+        0;
+
+
+    listenWindowEndsAt =
+        Date.now() +
+        WAKE_COMMAND_WINDOW_MS;
+
+
+    resetConversationTimeout();
+
+
+    setExpression(
+        "curious"
+    );
+
+
+    if (!visionFaceFound) {
+
+        lookAt(
+            0,
+            0
+        );
+    }
+
+
+    await wait(
+        100
+    );
+
+
+    startListening();
+}
+
+
+/* ============================================================
+   END CONVERSATION
+   ============================================================ */
+
+async function endConversationMode() {
+
+    conversationMode =
+        false;
+
+
+    listenRetryCount =
+        0;
+
+
+    listenWindowEndsAt =
+        0;
+
+
+    if (recognitionRestartTimer) {
+
+        clearTimeout(
+            recognitionRestartTimer
+        );
+
+
+        recognitionRestartTimer =
+            null;
+    }
+
+
+    if (
+        conversationTimeout
+    ) {
+
+        clearTimeout(
+            conversationTimeout
+        );
+
+
+        conversationTimeout =
+            null;
+    }
+
+
+    setExpression(
+        "normal"
+    );
+
+
+    try {
+
+        await postRobotEndpoint(
+            "/wake/resume"
+        );
+
+
+        console.log(
+            "Wake word listening resumed."
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Could not resume wake word:",
+            error
+        );
+    }
+
+
+    console.log(
+        "Conversation mode ended."
+    );
+}
+
+
+/* ============================================================
+   CONVERSATION TIMEOUT
+   ============================================================ */
+
+function resetConversationTimeout() {
+
+    if (
+        conversationTimeout
+    ) {
+
+        clearTimeout(
+            conversationTimeout
+        );
+    }
+
+
+    conversationTimeout =
+        setTimeout(
+            () => {
+
+                endConversationMode();
+
+            },
+            30000
+        );
+}
+
+
+/* ============================================================
+   ASK ROBOT BRAIN
+   ============================================================ */
+
+async function askBrain(
+    message
+) {
+
+    if (
+        !message ||
+        !message.trim()
+    ) {
+
+        return;
+    }
+
+
+    face.lastUserActivity =
+        Date.now();
+
+
+    if (
+        conversationMode
+    ) {
+
+        resetConversationTimeout();
+    }
+
+
+    /*
+        He remains THINKING until the Kokoro service reports
+        that actual audio has started.
+
+        /state handles switching face.speaking on at the exact
+        time Fenrir begins playing.
+    */
+
+    setExpression(
+        "thinking"
+    );
+
+
+    brainRequestActive =
+        true;
+
+
+    console.log(
+        "Sending to fast robot pipeline:",
+        message
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+                `${BRAIN_URL}/respond`,
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            message:
+                                message
+                        })
+                }
+            );
+
+
+        let data;
+
+
+        try {
+
+            data =
+                await response.json();
+
+        } catch (error) {
+
+            throw new Error(
+                `Robot returned HTTP ${response.status} without valid JSON.`
+            );
+        }
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.error ||
+                "Robot response failed."
+            );
+        }
+
+
+        console.log(
+            "Robot:",
+            data.reply
+        );
+
+
+        brainRequestActive =
+            false;
+
+
+        /*
+            /respond doesn't return until all queued Fenrir
+            speech has finished.
+
+            Now automatically listen for the next turn.
+        */
+
+        face.speaking =
+            false;
+
+
+        if (
+            conversationMode
+        ) {
+
+            listenRetryCount =
+                0;
+
+
+            resetConversationTimeout();
+
+
+            setExpression(
+                "curious"
+            );
+
+
+            setTimeout(
+                () => {
+
+                    startListening();
+
+                },
+                300
+            );
+
+        } else {
+
+            setExpression(
+                "normal"
+            );
+        }
+
+
+    } catch (error) {
+
+        brainRequestActive =
+            false;
+
+        console.error(
+            "Robot response error:",
+            error
+        );
+
+
+        face.speaking =
+            false;
+
+
+        setExpression(
+            "sad"
+        );
+
+
+        if (
+            conversationMode
+        ) {
+
+            setTimeout(
+                () => {
+
+                    setExpression(
+                        "curious"
+                    );
+
+
+                    startListening();
+
+                },
+                1000
+            );
+        }
+    }
+}
+
+
+/* ============================================================
+   OPENAI STREAMING TEXT TO SPEECH
+   Python plays PCM directly through laptop / robot speaker.
+   No MP3 files.
+   ============================================================ */
+
+async function speakText(
+    text
+) {
+
+
+    setExpression(
+        "normal"
+    );
+
+
+    if (!visionFaceFound) {
+
+        lookAt(
+            0,
+            0
+        );
+    }
+
+
+    console.log(
+        "Robot starting speech..."
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+                `${BRAIN_URL}/tts`,
+                {
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            text:
+                                text
+                        })
+                }
+            );
+
+
+        let data;
+
+
+        try {
+
+            data =
+                await response.json();
+
+        } catch (error) {
+
+            throw new Error(
+                `TTS returned HTTP ${response.status} without valid JSON.`
+            );
+        }
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.error ||
+                "Text-to-speech failed."
+            );
+        }
+
+
+        face.speaking =
+            false;
+
+
+        console.log(
+            "Robot finished speech."
+        );
+
+
+        if (
+            conversationMode
+        ) {
+
+            listenRetryCount =
+                0;
+
+
+            resetConversationTimeout();
+
+
+            setExpression(
+                "curious"
+            );
+
+
+            setTimeout(
+                () => {
+
+                    startListening();
+
+                },
+                350
+            );
+
+        } else {
+
+            setExpression(
+                "normal"
+            );
+        }
+
+
+    } catch (error) {
+
+        console.error(
+            "Robot voice error:",
+            error
+        );
+
+
+        face.speaking =
+            false;
+
+
+        setExpression(
+            "sad"
+        );
+
+
+        /*
+            TTS failed, but the whole robot does not
+            need to become permanently stuck.
+        */
+
+        if (
+            conversationMode
+        ) {
+
+            setTimeout(
+                () => {
+
+                    setExpression(
+                        "curious"
+                    );
+
+
+                    startListening();
+
+                },
+                1200
+            );
+        }
+    }
+}
+
+
+/* ============================================================
+   QUICK BRAIN TEST
+   Press B and type a message.
+   ============================================================ */
+
+function testBrain() {
+
+    const message =
+        prompt(
+            "Say something to Robot Friend:"
+        );
+
+
+    if (
+        message &&
+        message.trim()
+    ) {
+
+        conversationMode =
+            true;
+
+
+        resetConversationTimeout();
+
+
+        askBrain(
+            message
+        );
+    }
+}
+
+
+/* ============================================================
+   MICROPHONE / SPEECH RECOGNITION
+   ============================================================ */
+
+const SpeechRecognition =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
+
+
+let recognition =
+    null;
+
+
+let isListening =
+    false;
+
+
+if (
+    SpeechRecognition
+) {
+
+    recognition =
+        new SpeechRecognition();
+
+
+    recognition.continuous =
+        false;
+
+
+    recognition.interimResults =
+        false;
+
+
+    recognition.lang =
+        "en-US";
+
+
+    /* ========================================================
+       LISTEN STARTED
+       ======================================================== */
+
+    recognition.onstart =
+        () => {
+
+            isListening =
+                true;
+
+
+            recognitionHadResult =
+                false;
+
+
+            recognitionHadError =
+                false;
+
+
+            face.lastUserActivity =
+                Date.now();
+
+
+            setExpression(
+                "curious"
+            );
+
+
+            if (!visionFaceFound) {
+
+                lookAt(
+                    0,
+                    0
+                );
+            }
+
+
+            console.log(
+                "Listening..."
+            );
+        };
+
+
+    /* ========================================================
+       SPEECH HEARD
+       ======================================================== */
+
+    recognition.onresult =
+        event => {
+
+            recognitionHadResult =
+                true;
+
+            const transcript =
+                event.results[
+                    0
+                ][
+                    0
+                ]
+                .transcript
+                .trim();
+
+
+            console.log(
+                "You:",
+                transcript
+            );
+
+
+            isListening =
+                false;
+
+
+            listenRetryCount =
+                0;
+
+
+            if (
+                transcript
+            ) {
+
+                askBrain(
+                    transcript
+                );
+            }
+        };
+
+
+    /* ========================================================
+       SPEECH RECOGNITION ERROR
+       ======================================================== */
+
+    recognition.onerror =
+        event => {
+
+            const errorType =
+                event.error;
+
+
+            recognitionHadError =
+                true;
+
+
+            console.error(
+                "Speech recognition error:",
+                errorType
+            );
+
+
+            isListening =
+                false;
+
+
+            /*
+                Errors that are often temporary.
+            */
+
+            const retryableErrors = [
+                "no-speech",
+                "network",
+                "aborted"
+            ];
+
+
+            /*
+                Permission / device problems should
+                NOT create an infinite retry loop.
+            */
+
+            const fatalErrors = [
+                "not-allowed",
+                "service-not-allowed",
+                "audio-capture"
+            ];
+
+
+            if (
+                fatalErrors.includes(
+                    errorType
+                )
+            ) {
+
+                setExpression(
+                    "sad"
+                );
+
+
+                console.error(
+                    "Microphone cannot be used:",
+                    errorType
+                );
+
+
+                endConversationMode();
+
+
+                return;
+            }
+
+
+            setExpression(
+                "annoyed"
+            );
+
+
+            if (
+                conversationMode &&
+                retryableErrors.includes(errorType) &&
+                Date.now() < listenWindowEndsAt
+            ) {
+
+                scheduleListeningRestart();
+
+
+                return;
+            }
+
+
+            /*
+                If repeated recognition attempts fail,
+                return to wake-word mode instead of
+                getting stuck forever.
+            */
+
+            setTimeout(
+                () => {
+
+                    endConversationMode();
+
+                },
+                700
+            );
+        };
+
+
+    /* ========================================================
+       LISTEN ENDED
+       ======================================================== */
+
+    recognition.onend =
+        () => {
+
+            isListening =
+                false;
+
+
+            if (
+                conversationMode &&
+                !recognitionHadResult &&
+                !brainRequestActive &&
+                Date.now() < listenWindowEndsAt
+            ) {
+
+                scheduleListeningRestart();
+            }
+        };
+}
+
+
+function drawPixelMouth(type, x, y) {
+
+    const t = SETTINGS.mouthThickness;
+
+    if (type === "talking") {
+        const amount = face.mouthTalkAmount;
+
+        if (amount < 0.25) {
+            drawSegment(x, y, 172, t);
+            return;
+        }
+
+        const width = amount < 0.62 ? 174 : 202;
+        const height = amount < 0.62 ? 25 : 43;
+        drawSegment(x, y - height / 2, width - 16, t);
+        drawSegment(x, y + height / 2, width - 16, t);
+        drawSegment(x - width / 2, y, t, height);
+        drawSegment(x + width / 2, y, t, height);
+        return;
+    }
+
+    switch (type) {
+        case "happy":
+            drawSegment(x, y + 17, 120, t);
+            drawSegment(x - 78, y + 9, 42, t);
+            drawSegment(x + 78, y + 9, 42, t);
+            drawSegment(x - 103, y - 2, t, 24);
+            drawSegment(x + 103, y - 2, t, 24);
+            break;
+
+        case "smallSmile":
+            drawSegment(x, y + 8, 142, t);
+            drawSegment(x - 79, y, t, 17);
+            drawSegment(x + 79, y, t, 17);
+            break;
+
+        case "open":
+            drawSegment(x, y - 22, 148, t);
+            drawSegment(x, y + 22, 148, t);
+            drawSegment(x - 78, y, t, 44);
+            drawSegment(x + 78, y, t, 44);
+            break;
+
+        case "sad":
+            drawSegment(x, y - 14, 136, t);
+            drawSegment(x - 82, y - 5, 34, t);
+            drawSegment(x + 82, y - 5, 34, t);
+            drawSegment(x - 103, y + 5, t, 21);
+            drawSegment(x + 103, y + 5, t, 21);
+            break;
+
+        case "thinking":
+            drawSegment(x - 23, y, 132, t);
+            drawSegment(x + 59, y - 8, 27, t);
+            break;
+
+        case "flat":
+            drawSegment(x, y, 212, t);
+            break;
+
+        default:
+            drawSegment(x - 4, y, 208, t);
+            drawSegment(x + 106, y - 7, t, 16);
+    }
+}
+
+
+function scheduleListeningRestart() {
+
+    if (
+        recognitionRestartTimer ||
+        brainRequestActive ||
+        Date.now() >= listenWindowEndsAt
+    ) {
+
+        return;
+    }
+
+
+    listenRetryCount +=
+        1;
+
+
+    recognitionRestartTimer =
+        setTimeout(
+            () => {
+
+                recognitionRestartTimer =
+                    null;
+
+
+                if (
+                    conversationMode &&
+                    !brainRequestActive &&
+                    Date.now() < listenWindowEndsAt
+                ) {
+
+                    setExpression(
+                        "curious"
+                    );
+
+
+                    startListening();
+
+                } else if (
+                    Date.now() >= listenWindowEndsAt
+                ) {
+
+                    endConversationMode();
+                }
+
+            },
+            250
+        );
+}
+
+
+/* ============================================================
+   START LISTENING
+   ============================================================ */
+
+async function startListening() {
+
+    if (!recognition) {
+
+        alert(
+            "Speech recognition is not available in this browser. Use Chrome or Edge."
+        );
+
+
+        return;
+    }
+
+
+    if (
+        isListening ||
+        face.speaking ||
+        brainRequestActive
+    ) {
+
+        return;
+    }
+
+
+    /*
+        Manual M-key conversations should work even
+        without first saying the wake word.
+    */
+
+    if (
+        !conversationMode
+    ) {
+
+        conversationMode =
+            true;
+
+
+        listenWindowEndsAt =
+            Date.now() +
+            WAKE_COMMAND_WINDOW_MS;
+
+
+        resetConversationTimeout();
+    }
+
+
+    /*
+        Tell Python to release the microphone before
+        Chrome asks Windows for it.
+    */
+
+    try {
+
+        await postRobotEndpoint(
+            "/wake/pause"
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Could not pause wake word microphone:",
+            error
+        );
+    }
+
+
+    /*
+        Small Windows device handoff delay.
+
+        This is intentional. PyAudio has just released
+        the device and Chrome is about to claim it.
+    */
+
+    await wait(
+        180
+    );
+
+
+    if (
+        isListening ||
+        face.speaking
+    ) {
+
+        return;
+    }
+
+
+    try {
+
+        recognitionHadResult =
+            false;
+
+
+        recognitionHadError =
+            false;
+
+        recognition.start();
+
+    } catch (error) {
+
+        console.error(
+            "Could not start microphone:",
+            error
+        );
+
+
+        isListening =
+            false;
+    }
+}
+
+/* ============================================================
+   KEYBOARD CONTROLS
+   ============================================================ */ 
+document.addEventListener(
+    "keydown",
+    event => {
+
+        switch (
+            event.key
+        ) {
+
+            case "0":
+
+                setExpression(
+                    "normal"
+                );
+
+                break;
+
+
+            case "p":
+
+            case "P":
+
+                window.location.search =
+                    PIXEL_MODE
+                        ? "?face=classic"
+                        : "?face=pixel";
+
+
+                break;
+
+
+            case "1":
+
+                setExpression(
+                    "happy"
+                );
+
+                break;
+
+
+            case "2":
+
+                setExpression(
+                    "curious"
+                );
+
+                break;
+
+
+            case "3":
+
+                setExpression(
+                    "surprised"
+                );
+
+                break;
+
+
+            case "4":
+
+                setExpression(
+                    "annoyed"
+                );
+
+                break;
+
+
+            case "5":
+
+                setExpression(
+                    "thinking"
+                );
+
+                break;
+
+
+            case "6":
+
+                setExpression(
+                    "sleeping"
+                );
+
+                break;
+
+
+            case "7":
+
+                setExpression(
+                    "excited"
+                );
+
+                break;
+
+
+            case "8":
+
+                setExpression(
+                    "sad"
+                );
+
+                break;
+            
+                
+            case "t":
+            case "T":
+
+                 testTalking();
+
+                break;    
+
+
+            case "b":
+            case "B":
+
+                testBrain();
+
+                 break;
+            case "m":
+            case "M":
+
+                 startListening();
+
+                break;
+                 case " ":
+
+                blink();
+
+                break;
+        }
+    }
+);
+
+
+/* ============================================================
+   STARTUP
+   ============================================================ */
+
+function startup() {
+
+    setExpression(
+        "sleeping"
+    );
+
+
+    setTimeout(
+        () => {
+
+            setExpression(
+                "normal"
+            );
+
+            blink();
+
+
+            setTimeout(
+                () => {
+
+                    lookAt(
+                        -0.25,
+                        0
+                    );
+
+                },
+                400
+            );
+
+
+            setTimeout(
+                () => {
+
+                    lookAt(
+                        0.25,
+                        0
+                    );
+
+                },
+                800
+            );
+
+
+            setTimeout(
+                () => {
+
+                    lookAt(
+                        0,
+                        0
+                    );
+
+                },
+                1200
+            );
+
+        },
+        650
+    );
+}
+
+startup();
+
+</script>
+
+</body>
+</html>
