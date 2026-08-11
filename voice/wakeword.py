@@ -1,5 +1,7 @@
+import io
 import threading
 import time
+import wave
 
 import numpy as np
 import pyaudio
@@ -317,6 +319,67 @@ class WakeWordListener:
                 time.sleep(
                     0.25
                 )
+
+
+    # ========================================================
+    # CAPTURE ONE POST-WAKE COMMAND
+    # ========================================================
+
+    def capture_command(self, max_seconds=10.0):
+        """Record one command and return a WAV byte string, or None on silence."""
+        if not self.pause_complete.wait(timeout=3.0):
+            raise RuntimeError("Wake microphone did not release in time")
+
+        command_stream = self.audio.open(
+            format=pyaudio.paInt16,
+            channels=CHANNELS,
+            rate=RATE,
+            input=True,
+            frames_per_buffer=CHUNK,
+        )
+        frames = []
+        speech_started = False
+        silent_chunks = 0
+        silence_chunks_to_stop = max(1, int(0.9 * RATE / CHUNK))
+        max_chunks = max(1, int(max_seconds * RATE / CHUNK))
+        speech_threshold = 350
+
+        print("Listening for command...")
+        try:
+            for _ in range(max_chunks):
+                raw_audio = command_stream.read(CHUNK, exception_on_overflow=False)
+                level = float(np.sqrt(np.mean(
+                    np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) ** 2
+                )))
+
+                if level >= speech_threshold:
+                    speech_started = True
+                    silent_chunks = 0
+                elif speech_started:
+                    silent_chunks += 1
+
+                if speech_started:
+                    frames.append(raw_audio)
+                    if silent_chunks >= silence_chunks_to_stop:
+                        break
+        finally:
+            try:
+                command_stream.stop_stream()
+            except Exception:
+                pass
+            command_stream.close()
+
+        if not frames:
+            print("No command speech detected.")
+            return None
+
+        output = io.BytesIO()
+        with wave.open(output, "wb") as wav_file:
+            wav_file.setnchannels(CHANNELS)
+            wav_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
+            wav_file.setframerate(RATE)
+            wav_file.writeframes(b"".join(frames))
+        return output.getvalue()
 
 
     # ========================================================
