@@ -5,13 +5,13 @@ from .simulated import (
     SimulatedDisplay,
     SimulatedMotion,
     SimulatedSensors,
-    KokoroAudioOutput,
+    KokoroAudioOutput, OpenAIAudioOutput,
     CameraAwareSensors,
 )
 from .opencv_camera import OpenCVCamera
 
 __all__ = [
     "SimulatedAudioInput", "SimulatedAudioOutput", "SimulatedCamera",
-    "SimulatedDisplay", "SimulatedMotion", "SimulatedSensors", "KokoroAudioOutput",
+    "SimulatedDisplay", "SimulatedMotion", "SimulatedSensors", "KokoroAudioOutput", "OpenAIAudioOutput",
     "CameraAwareSensors", "OpenCVCamera",
 ]
