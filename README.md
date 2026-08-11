@@ -34,11 +34,13 @@ Invoke-RestMethod http://127.0.0.1:8000/safety/stop -Method Post `
 Invoke-RestMethod http://127.0.0.1:8000/safety/reset -Method Post
 ```
 
-## Existing local voice
+## Voice output
 
-Start the existing Kokoro service as before, then set `ROBOT_AUDIO=kokoro` in
-`.env`. Otherwise speech is logged through the simulator, making Windows work
-without a microphone or speaker.
+On Windows, an existing `OPENAI_API_KEY` automatically enables real speech through
+OpenAI and plays it through the default PC speakers. The older `ROBOT_AUDIO=sim`
+value is upgraded automatically when a key is present. Set `ROBOT_AUDIO=silent`
+to deliberately disable playback, or start the local Kokoro service and set
+`ROBOT_AUDIO=kokoro` to use that service instead.
 
 ## Architecture
 
