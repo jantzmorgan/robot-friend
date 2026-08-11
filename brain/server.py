@@ -18,6 +18,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
@@ -44,6 +45,7 @@ conversation: list[dict[str, str]] = []
 conversation_lock = threading.RLock()
 CURRENT_MEMORY_SUBJECT = os.getenv("ROBOT_MEMORY_SUBJECT", "primary_user")
 wake_listener = None
+wake_command_lock = threading.Lock()
 
 FACE_COLORS = {
     "red": "#FF3B30", "orange": "#FF8A2D", "herman orange": "#FF5A2D",
@@ -184,8 +186,56 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
     return found
 
 
+def transcribe_command(audio_bytes: bytes) -> str:
+    """Transcribe an approved post-wake command through OpenAI."""
+    transcript = get_openai_client().audio.transcriptions.create(
+        model=os.getenv("ROBOT_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"),
+        file=("robot-command.wav", audio_bytes, "audio/wav"),
+        language="en",
+    )
+    return str(transcript.text).strip()
+
+
+def process_wake_command() -> None:
+    """Capture, transcribe, answer, then safely return to wake-word mode."""
+    if not wake_command_lock.acquire(blocking=False):
+        return
+    try:
+        if wake_listener is None:
+            return
+        wake_listener.pause(wait=True)
+        audio_bytes = wake_listener.capture_command()
+        if not audio_bytes:
+            return
+
+        message = transcribe_command(audio_bytes)
+        if not message:
+            app.logger.warning("OpenAI returned an empty command transcript")
+            return
+
+        print(f"You: {message}")
+        runtime.state.update(listening=False, mode="thinking")
+        apply_spoken_face_colors(message)
+        reply = generate_reply(message)
+        print(f"Robot: {reply}")
+        runtime.speak(reply)
+    except Exception as error:
+        runtime.state.update(last_error=f"Voice command failed: {error}")
+        app.logger.exception("Post-wake voice command failed")
+    finally:
+        if wake_listener is not None:
+            wake_listener.resume()
+        runtime.state.update(
+            listening=True,
+            wake_detected=False,
+            wake_paused=False,
+            mode="idle",
+        )
+        wake_command_lock.release()
+
+
 def handle_wake_word() -> None:
-    """Notify the face and release the mic for browser speech recognition."""
+    """Notify the face, release the mic, and process the command in Python."""
     state = runtime.state.snapshot()
     runtime.state.update(
         wake_detected=True,
@@ -197,6 +247,7 @@ def handle_wake_word() -> None:
         # This callback runs on the listener thread, so it must not wait for
         # that same thread to acknowledge the pause.
         wake_listener.pause(wait=False)
+        threading.Thread(target=process_wake_command, daemon=True).start()
 
 
 def start_wake_word() -> None:
@@ -228,6 +279,8 @@ def value_error(error):
 
 @app.errorhandler(Exception)
 def unexpected_error(error):
+    if isinstance(error, HTTPException):
+        return jsonify(error=error.description), error.code
     app.logger.exception("Unhandled brain request failure")
     return jsonify(error=str(error)), 500
 
