@@ -39,6 +39,7 @@ class WakeWordListener:
         self.model = None
 
         self.pause_requested = threading.Event()
+        self.pause_complete = threading.Event()
 
         self.stream_lock = threading.Lock()
 
@@ -168,9 +169,14 @@ class WakeWordListener:
     # two systems from fighting over the same Windows mic.
     # ========================================================
 
-    def pause(self):
+    def pause(self, wait=True):
 
         self.pause_requested.set()
+
+        # The HTTP pause endpoint must not return until Windows has actually
+        # released the input device for browser speech recognition.
+        if wait and threading.current_thread() is not self.thread:
+            self.pause_complete.wait(timeout=2.0)
 
 
     # ========================================================
@@ -179,6 +185,7 @@ class WakeWordListener:
 
     def resume(self):
 
+        self.pause_complete.clear()
         self.pause_requested.clear()
 
 
@@ -214,6 +221,7 @@ class WakeWordListener:
             if self.pause_requested.is_set():
 
                 self._close_stream()
+                self.pause_complete.set()
 
                 time.sleep(
                     0.05
