@@ -325,8 +325,8 @@ class WakeWordListener:
     # CAPTURE ONE POST-WAKE COMMAND
     # ========================================================
 
-    def capture_command(self, max_seconds=10.0):
-        """Record one command and return a WAV byte string, or None on silence."""
+    def capture_command(self, max_seconds=15.0, silence_seconds=1.8):
+        """Record one command, allowing natural pauses, and return WAV bytes."""
         if not self.pause_complete.wait(timeout=3.0):
             raise RuntimeError("Wake microphone did not release in time")
 
@@ -340,7 +340,7 @@ class WakeWordListener:
         frames = []
         speech_started = False
         silent_chunks = 0
-        silence_chunks_to_stop = max(1, int(0.9 * RATE / CHUNK))
+        silence_chunks_to_stop = max(1, int(silence_seconds * RATE / CHUNK))
         max_chunks = max(1, int(max_seconds * RATE / CHUNK))
         speech_threshold = 350
 
