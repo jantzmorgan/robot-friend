@@ -137,6 +137,13 @@ class OpenAIAudioOutput(AudioOutputDriver):
         self.model = model
         self.voice = voice
         self._stop_requested = threading.Event()
+        self._on_playback_start = lambda: None
+        self._on_playback_end = lambda: None
+
+    def set_playback_callbacks(self, on_start, on_end) -> None:
+        """Report actual speaker playback boundaries to the robot runtime."""
+        self._on_playback_start = on_start
+        self._on_playback_end = on_end
 
     def speak(self, text: str) -> None:
         if os.name != "nt":
@@ -155,6 +162,7 @@ class OpenAIAudioOutput(AudioOutputDriver):
         wav_bytes = response.content
         player = pyaudio.PyAudio()
         stream = None
+        playback_started = False
         try:
             with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
                 stream = player.open(
@@ -163,6 +171,8 @@ class OpenAIAudioOutput(AudioOutputDriver):
                     rate=wav_file.getframerate(),
                     output=True,
                 )
+                self._on_playback_start()
+                playback_started = True
                 while not self._stop_requested.is_set():
                     frames = wav_file.readframes(2048)
                     if not frames:
@@ -173,6 +183,8 @@ class OpenAIAudioOutput(AudioOutputDriver):
                 stream.stop_stream()
                 stream.close()
             player.terminate()
+            if playback_started:
+                self._on_playback_end()
 
     def stop(self) -> None:
         self._stop_requested.set()

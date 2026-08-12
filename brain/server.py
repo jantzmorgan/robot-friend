@@ -197,28 +197,52 @@ def transcribe_command(audio_bytes: bytes) -> str:
 
 
 def process_wake_command() -> None:
-    """Capture, transcribe, answer, then safely return to wake-word mode."""
+    """Run a multi-turn conversation, then safely return to wake-word mode."""
     if not wake_command_lock.acquire(blocking=False):
         return
     try:
         if wake_listener is None:
             return
+
         wake_listener.pause(wait=True)
-        audio_bytes = wake_listener.capture_command()
-        if not audio_bytes:
-            return
+        silence_seconds = float(os.getenv("ROBOT_COMMAND_SILENCE_SECONDS", "1.8"))
+        followup_wait = float(os.getenv("ROBOT_CONVERSATION_WAIT_SECONDS", "12"))
+        max_turns = max(1, int(os.getenv("ROBOT_CONVERSATION_MAX_TURNS", "20")))
+        exit_phrases = {
+            "stop listening", "end conversation", "goodbye", "go to sleep",
+            "that's all", "that is all", "never mind", "nevermind",
+        }
 
-        message = transcribe_command(audio_bytes)
-        if not message:
-            app.logger.warning("OpenAI returned an empty command transcript")
-            return
+        print("Conversation mode active.")
+        for turn_number in range(max_turns):
+            runtime.state.update(listening=True, mode="listening")
+            audio_bytes = wake_listener.capture_command(
+                max_seconds=15.0 if turn_number == 0 else followup_wait,
+                silence_seconds=silence_seconds,
+            )
+            if not audio_bytes:
+                print("Conversation timed out; returning to wake-word mode.")
+                break
 
-        print(f"You: {message}")
-        runtime.state.update(listening=False, mode="thinking")
-        apply_spoken_face_colors(message)
-        reply = generate_reply(message)
-        print(f"Robot: {reply}")
-        runtime.speak(reply)
+            message = transcribe_command(audio_bytes)
+            if not message:
+                app.logger.warning("OpenAI returned an empty command transcript")
+                continue
+
+            print(f"You: {message}")
+            normalized = re.sub(r"[^a-z' ]", "", message.lower()).strip()
+            if normalized in exit_phrases:
+                runtime.state.update(listening=False)
+                runtime.speak("Okay. Say Hey Jarvis when you need me.")
+                break
+
+            runtime.state.update(listening=False, mode="thinking")
+            apply_spoken_face_colors(message)
+            reply = generate_reply(message)
+            print(f"Robot: {reply}")
+            runtime.speak(reply)
+        else:
+            print("Conversation turn limit reached; returning to wake-word mode.")
     except Exception as error:
         runtime.state.update(last_error=f"Voice command failed: {error}")
         app.logger.exception("Post-wake voice command failed")

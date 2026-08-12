@@ -24,6 +24,12 @@ class RobotRuntime:
         self.audio_input, self.audio_output = audio_input, audio_output
         self.obstacle_stop_cm = obstacle_stop_cm
         self.state = StateStore()
+        self._audio_reports_playback = hasattr(audio_output, "set_playback_callbacks")
+        if self._audio_reports_playback:
+            audio_output.set_playback_callbacks(
+                lambda: self.state.update(speaking=True, mode="speaking"),
+                lambda: self.state.update(speaking=False, mode="idle"),
+            )
         self._shutdown = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -99,7 +105,10 @@ class RobotRuntime:
         self.state.update(expression=expression)
 
     def speak(self, text: str) -> None:
-        self.state.update(speaking=True, mode="speaking")
+        # Drivers with playback callbacks keep the mouth still while speech is
+        # being synthesized, then animate it only while sound reaches speakers.
+        if not self._audio_reports_playback:
+            self.state.update(speaking=True, mode="speaking")
         try:
             self.audio_output.speak(text)
         finally:
