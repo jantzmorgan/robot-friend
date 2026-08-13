@@ -2426,10 +2426,30 @@ async function startRealtimeConversation() {
 
         const offer = await realtimePeer.createOffer();
         await realtimePeer.setLocalDescription(offer);
+        if (realtimePeer.iceGatheringState !== "complete") {
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    realtimePeer.removeEventListener("icegatheringstatechange", onIceState);
+                    reject(new Error("Microphone connection setup timed out."));
+                }, 5000);
+                function onIceState() {
+                    if (realtimePeer.iceGatheringState === "complete") {
+                        clearTimeout(timeout);
+                        realtimePeer.removeEventListener("icegatheringstatechange", onIceState);
+                        resolve();
+                    }
+                }
+                realtimePeer.addEventListener("icegatheringstatechange", onIceState);
+            });
+        }
+        const localSdp = realtimePeer.localDescription?.sdp || "";
+        if (!localSdp.includes("m=audio")) {
+            throw new Error("The browser did not create a usable microphone connection.");
+        }
         const response = await fetch(`${BRAIN_URL}/realtime/session`, {
             method: "POST",
             headers: {"Content-Type": "application/sdp"},
-            body: offer.sdp
+            body: localSdp
         });
         if (!response.ok) {
             let detail = "Could not start realtime voice.";

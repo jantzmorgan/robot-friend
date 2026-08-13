@@ -570,6 +570,8 @@ def create_realtime_session():
     offer = request.get_data(as_text=True).strip()
     if not offer:
         raise ValueError("No WebRTC offer supplied")
+    if "m=audio" not in offer:
+        raise ValueError("WebRTC offer has no audio media section")
 
     if wake_listener is not None:
         wake_listener.pause(wait=True)

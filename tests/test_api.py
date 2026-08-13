@@ -93,7 +93,8 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("OPENAI_API_KEY", reason)
         response = self.client.post(
-            "/realtime/session", data="offer-sdp", content_type="application/sdp"
+            "/realtime/session", data="v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+            content_type="application/sdp"
         )
         self.assertEqual(response.status_code, 503)
         self.assertIn("OPENAI_API_KEY", response.get_json()["error"])
@@ -104,7 +105,8 @@ class ApiTests(unittest.TestCase):
         upstream = Mock(status_code=200, text="answer-sdp", is_error=False)
         post.return_value = upstream
         response = self.client.post(
-            "/realtime/session", data="offer-sdp", content_type="application/sdp"
+            "/realtime/session", data="v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+            content_type="application/sdp"
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_data(as_text=True), "answer-sdp")
