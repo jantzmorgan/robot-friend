@@ -132,7 +132,7 @@ FACE_MODES = {
     "super_saiyan": ("excited", ("super saiyan", "saiyan", "power level")),
     "love": ("happy", ("love mode", "heart mode")),
     "celebration": ("excited", ("celebration mode", "confetti mode", "celebrate")),
-    "sleep": ("normal", ("sleep mode", "sleepy mode", "dream mode")),
+    "sleep": ("sleeping", ("sleep mode", "sleepy mode", "dream mode")),
     "spooky": ("surprised", ("spooky mode", "haunted mode")),
     "scanner": ("curious", ("scanner mode", "scan mode")),
     "glitch": ("surprised", ("glitch mode", "glitch out")),

@@ -97,6 +97,9 @@ class ApiTests(unittest.TestCase):
                 apply_spoken_face_colors(command)
                 self.assertEqual(runtime.state.snapshot()["face_effect"], expected)
 
+        apply_spoken_face_colors("Sleep mode")
+        self.assertEqual(runtime.state.snapshot()["expression"], "sleeping")
+
         apply_spoken_face_colors("Stop Super Saiyan mode")
         self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
 

@@ -340,6 +340,19 @@ function clearGlow() {
     ctx.shadowBlur = 0;
 }
 
+function drawHeartEye(x, y) {
+    const pixel = 11;
+    const rows = ["01100110", "11111111", "11111111", "01111110", "00111100", "00011000"];
+    ctx.save();
+    ctx.fillStyle = "#FF3B30";
+    ctx.shadowColor = "#FF3B30";
+    ctx.shadowBlur = 18;
+    rows.forEach((row, rowIndex) => [...row].forEach((cell, columnIndex) => {
+        if (cell === "1") ctx.fillRect(x + (columnIndex - 4) * pixel, y + (rowIndex - 2.5) * pixel, pixel - 2, pixel - 2);
+    }));
+    ctx.restore();
+}
+
 
 /* ============================================================
    BOXY EYE
@@ -1131,11 +1144,22 @@ const gazeVerticalSquash =
             break;
     }
 
+    // Cosmetic sleep remains visibly asleep even if conversation state briefly changes.
+    if (faceEffect === "sleep" && !face.speaking) {
+        leftOptions = { squash: 0.08, stretch: 1.12 };
+        rightOptions = { squash: 0.08, stretch: 1.12 };
+        mouthType = "flat";
+    }
+
 
     /* ========================================================
        DRAW EYES
        ======================================================== */
 
+    if (faceEffect === "love") {
+        drawHeartEye(leftBaseX, centerY);
+        drawHeartEye(rightBaseX, centerY);
+    } else {
     drawEye(
     leftBaseX + gazeX,
     centerY + gazeY,
@@ -1173,6 +1197,7 @@ drawEye(
             gazeVerticalSquash
     }
 );
+    }
 
 
     /* ========================================================
@@ -1297,10 +1322,10 @@ function drawPixelEffects(now) {
     const showTears = faceEffect === "tears" || (automatic && face.expression === "sad");
     const showDance = faceEffect === "dance";
     const modePalettes = {
-        love: ["#FF4FC8", "#FF6F9F", "#FF3B30"], celebration: ["#FFE14A", "#42E8FF", "#FF4FC8", "#4CFF88"],
+        celebration: ["#FFE14A", "#42E8FF", "#FF4FC8", "#4CFF88"],
         spooky: ["#A970FF", "#4CFF88", "#F4FAFF"], glitch: ["#42E8FF", "#FF3FD5", "#F4FAFF"],
         police: ["#FF3B30", "#4267D9"], powerup: ["#FFE14A", "#42E8FF", "#F4FAFF"],
-        laugh: ["#FFE14A", "#FF8A2D"], embarrassed: ["#FF6F9F", "#FFB38A"],
+        laugh: ["#FFE14A", "#FF8A2D"],
         super_saiyan: ["#FFE14A", "#FFD34E", "#F4FAFF"], sleep: ["#6657E8", "#65D9FF"],
     };
 
@@ -1340,6 +1365,19 @@ function drawPixelEffects(now) {
     if (faceEffect === "scanner") {
         const scanY = centerY - 185 + (now * 0.18) % 370;
         for (let x = centerX - 290; x <= centerX + 290; x += 18) drawEffectPixel(x, scanY, 12, 5, "#4CFF88");
+    }
+
+    if (faceEffect === "embarrassed") {
+        const cheekY = centerY + 72;
+        [-SETTINGS.eyeGap * 0.72, SETTINGS.eyeGap * 0.72].forEach(offset => {
+            for (let row = 0; row < 3; row++) for (let column = 0; column < 5; column++) {
+                drawEffectPixel(centerX + offset + (column - 2) * 10, cheekY + row * 9, 7, 7, row === 1 ? "#FF6F9F" : "#FF9BBD");
+            }
+        });
+        const sweatX = centerX + SETTINGS.eyeGap * 0.62;
+        const sweatY = centerY - 112 + Math.sin(now * 0.004) * 5;
+        drawEffectPixel(sweatX, sweatY, 15, 28, "#65D9FF");
+        drawEffectPixel(sweatX - 5, sweatY + 16, 9, 10, "#8DE8FF");
     }
 
     if (showFire) {
