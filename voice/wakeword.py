@@ -1,5 +1,7 @@
 import io
 from collections import deque
+import os
+from pathlib import Path
 import threading
 import time
 import wave
@@ -18,9 +20,9 @@ from openwakeword.model import Model
 RATE = 16000
 CHANNELS = 1
 CHUNK = 1280
-THRESHOLD = 0.5
-
-WAKE_MODEL_NAME = "hey_jarvis"
+DEFAULT_THRESHOLD = float(os.getenv("ROBOT_WAKE_THRESHOLD", "0.5"))
+HERMAN_THRESHOLD = float(os.getenv("ROBOT_HERMAN_WAKE_THRESHOLD", "0.45"))
+CUSTOM_MODEL = Path(__file__).resolve().parent / "models" / "hey_herman.onnx"
 
 
 # ============================================================
@@ -63,11 +65,10 @@ class WakeWordListener:
         openwakeword.utils.download_models()
 
 
-        self.model = Model(
-            wakeword_models=[
-                WAKE_MODEL_NAME
-            ]
-        )
+        wake_models = ["hey_jarvis"]
+        if CUSTOM_MODEL.exists():
+            wake_models.insert(0, str(CUSTOM_MODEL))
+        self.model = Model(wakeword_models=wake_models, inference_framework="onnx")
 
 
         self.audio = pyaudio.PyAudio()
@@ -88,7 +89,7 @@ class WakeWordListener:
         print("Wake word listener online.")
 
         print(
-            'Temporary wake phrase: "Hey Jarvis"'
+            'Wake phrases: "Hey Herman" (primary), "Hey Jarvis" (fallback)'
         )
 
 
@@ -277,8 +278,9 @@ class WakeWordListener:
                     )
 
 
+                    threshold = HERMAN_THRESHOLD if "herman" in model_name.lower() else DEFAULT_THRESHOLD
                     if (
-                        score >= THRESHOLD
+                        score >= threshold
                         and
                         time.time() -
                         last_activation >

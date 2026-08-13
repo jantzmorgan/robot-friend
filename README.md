@@ -17,7 +17,8 @@ python brain\server.py
 ```
 
 Open `http://127.0.0.1:8000`. Hardware/state endpoints work without an API key.
-Allow microphone access when the browser asks. Say **Hey Jarvis** once, then
+Allow microphone access when the browser asks. Say **Hey Herman** (or the temporary
+fallback **Hey Jarvis**) once, then
 talk naturally without repeating the wake phrase. The live session ends after
 30 seconds of silence or when you say “stop listening,” “goodbye,” or “go to sleep.”
 
