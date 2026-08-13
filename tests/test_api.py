@@ -10,7 +10,7 @@ os.environ["ROBOT_MEMORY_PATH"] = os.path.join(tempfile.gettempdir(), "robot_fri
 
 from brain.server import (
     app, apply_spoken_face_colors, arm_realtime_guard,
-    realtime_readiness, realtime_session_config, runtime,
+    realtime_readiness, realtime_session_config, robot_context, runtime,
 )
 
 
@@ -90,6 +90,12 @@ class ApiTests(unittest.TestCase):
         self.assertIn("under 20 words", config["instructions"])
         self.assertIn("2-6 concise, complete sentences", config["instructions"])
         self.assertGreaterEqual(config["max_output_tokens"], 800)
+
+    def test_robot_knows_spoken_face_commands_are_real(self):
+        context = robot_context("Make your face blue")
+        self.assertIn("local appearance controller", context.lower())
+        self.assertIn("treat the change as successfully performed", context)
+        self.assertIn("Never say you cannot change your face color", context)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "", "ROBOT_REALTIME": "1"})
     def test_missing_key_is_reported_before_session_handoff(self):
