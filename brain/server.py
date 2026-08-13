@@ -56,6 +56,14 @@ def realtime_enabled() -> bool:
     return os.getenv("ROBOT_REALTIME", "1").lower() not in {"0", "false", "off", "no"}
 
 
+def realtime_readiness() -> tuple[bool, str | None]:
+    if not realtime_enabled():
+        return False, "Realtime voice is disabled"
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        return False, "OPENAI_API_KEY is missing from .env"
+    return True, None
+
+
 def cancel_realtime_guard() -> None:
     global realtime_guard_generation
     with realtime_guard_lock:
@@ -379,6 +387,14 @@ def process_wake_command() -> None:
 
 def handle_wake_word() -> None:
     """Notify the face, release the mic, and process the command in Python."""
+    ready, reason = realtime_readiness()
+    if realtime_enabled() and not ready:
+        runtime.state.update(
+            wake_detected=False, wake_paused=False, listening=True,
+            mode="idle", last_error=reason,
+        )
+        app.logger.error("Wake ignored: %s", reason)
+        return
     state = runtime.state.snapshot()
     runtime.state.update(
         wake_detected=True,
@@ -440,8 +456,16 @@ def face():
 
 @app.get("/health")
 def health():
-    return jsonify(status="brain online", hardware=os.getenv("ROBOT_HARDWARE", "sim"),
-                   state=runtime.state.snapshot())
+    realtime_ready, realtime_error = realtime_readiness()
+    return jsonify(
+        status="brain online", hardware=os.getenv("ROBOT_HARDWARE", "sim"),
+        services={
+            "realtime_enabled": realtime_enabled(),
+            "realtime_ready": realtime_ready,
+            "realtime_error": realtime_error,
+        },
+        state=runtime.state.snapshot(),
+    )
 
 
 @app.get("/state")
@@ -538,9 +562,11 @@ def create_realtime_session():
     """Exchange the browser's WebRTC offer for an OpenAI answer SDP."""
     if not realtime_enabled():
         return jsonify(error="Realtime conversation is disabled"), 409
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
+    ready, reason = realtime_readiness()
+    if not ready:
+        runtime.state.update(last_error=reason)
+        return jsonify(error=reason), 503
+    api_key = os.environ["OPENAI_API_KEY"]
     offer = request.get_data(as_text=True).strip()
     if not offer:
         raise ValueError("No WebRTC offer supplied")
@@ -566,8 +592,15 @@ def create_realtime_session():
         timeout=30.0,
     )
     if upstream.is_error:
+        try:
+            upstream_message = upstream.json().get("error", {}).get("message", "")
+        except (ValueError, AttributeError):
+            upstream_message = ""
+        detail = upstream_message or f"OpenAI Realtime returned HTTP {upstream.status_code}"
+        runtime.state.update(last_error=f"Realtime session failed: {detail}")
         app.logger.error("Realtime session failed (%s): %s", upstream.status_code, upstream.text)
-        return jsonify(error="Could not start the live voice session"), upstream.status_code
+        return jsonify(error=detail), upstream.status_code
+    runtime.state.update(last_error=None)
     return Response(upstream.text, status=200, content_type="application/sdp")
 
 

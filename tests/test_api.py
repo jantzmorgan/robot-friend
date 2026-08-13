@@ -10,7 +10,7 @@ os.environ["ROBOT_MEMORY_PATH"] = os.path.join(tempfile.gettempdir(), "robot_fri
 
 from brain.server import (
     app, apply_spoken_face_colors, arm_realtime_guard,
-    realtime_session_config, runtime,
+    realtime_readiness, realtime_session_config, runtime,
 )
 
 
@@ -19,7 +19,9 @@ class ApiTests(unittest.TestCase):
         self.client = app.test_client()
 
     def test_health_and_motion(self):
-        self.assertEqual(self.client.get("/health").status_code, 200)
+        health = self.client.get("/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertIn("realtime_ready", health.get_json()["services"])
         response = self.client.post("/motion", json={"linear": 0.2, "angular": 0})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["moving"])
@@ -84,6 +86,17 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(turn["create_response"])
         self.assertTrue(turn["interrupt_response"])
         self.assertIn("under 20 words", config["instructions"])
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "", "ROBOT_REALTIME": "1"})
+    def test_missing_key_is_reported_before_session_handoff(self):
+        ready, reason = realtime_readiness()
+        self.assertFalse(ready)
+        self.assertIn("OPENAI_API_KEY", reason)
+        response = self.client.post(
+            "/realtime/session", data="offer-sdp", content_type="application/sdp"
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("OPENAI_API_KEY", response.get_json()["error"])
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "ROBOT_REALTIME": "1"})
     @patch("brain.server.httpx.post")
