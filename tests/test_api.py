@@ -83,6 +83,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(state["face_effect"], "none")
         self.assertEqual(state["expression"], "normal")
 
+    def test_all_cosmetic_modes_can_start(self):
+        commands = {
+            "Go Super Saiyan": "super_saiyan", "Love mode": "love",
+            "Celebrate": "celebration", "Sleep mode": "sleep",
+            "Spooky mode": "spooky", "Scanner mode": "scanner",
+            "Glitch out": "glitch", "Police mode": "police",
+            "Charge up": "powerup", "Laugh mode": "laugh",
+            "Blush mode": "embarrassed",
+        }
+        for command, expected in commands.items():
+            with self.subTest(command=command):
+                apply_spoken_face_colors(command)
+                self.assertEqual(runtime.state.snapshot()["face_effect"], expected)
+
+        apply_spoken_face_colors("Stop Super Saiyan mode")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
+
     def test_fire_can_start_and_stop(self):
         apply_spoken_face_colors("Start the fire")
         self.assertEqual(runtime.state.snapshot()["face_effect"], "fire")
@@ -114,6 +131,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn("treat the change as successfully performed", context)
         self.assertIn("Never say you cannot change your face color", context)
         self.assertIn("real dance, party, and disco", context)
+        self.assertIn("Super Saiyan", context)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "", "ROBOT_REALTIME": "1"})
     def test_missing_key_is_reported_before_session_handoff(self):

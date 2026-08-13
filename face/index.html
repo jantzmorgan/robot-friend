@@ -1296,6 +1296,13 @@ function drawPixelEffects(now) {
     const showFire = faceEffect === "fire" || (automatic && face.expression === "annoyed");
     const showTears = faceEffect === "tears" || (automatic && face.expression === "sad");
     const showDance = faceEffect === "dance";
+    const modePalettes = {
+        love: ["#FF4FC8", "#FF6F9F", "#FF3B30"], celebration: ["#FFE14A", "#42E8FF", "#FF4FC8", "#4CFF88"],
+        spooky: ["#A970FF", "#4CFF88", "#F4FAFF"], glitch: ["#42E8FF", "#FF3FD5", "#F4FAFF"],
+        police: ["#FF3B30", "#4267D9"], powerup: ["#FFE14A", "#42E8FF", "#F4FAFF"],
+        laugh: ["#FFE14A", "#FF8A2D"], embarrassed: ["#FF6F9F", "#FFB38A"],
+        super_saiyan: ["#FFE14A", "#FFD34E", "#F4FAFF"], sleep: ["#6657E8", "#65D9FF"],
+    };
 
     if (showDance) {
         const danceColors = ["#FF3B30", "#FFE14A", "#4CFF88", "#42E8FF", "#A970FF", "#FF4FC8"];
@@ -1312,6 +1319,27 @@ function drawPixelEffects(now) {
                 danceColors[(index + Math.floor(now / 180)) % danceColors.length]
             );
         }
+    }
+
+    const palette = modePalettes[faceEffect];
+    if (palette) {
+        const count = faceEffect === "super_saiyan" ? 28 : 16;
+        for (let index = 0; index < count; index++) {
+            const phase = now * (faceEffect === "glitch" ? 0.018 : 0.006) + index * 1.73;
+            const spreadX = Math.min(window.innerWidth * 0.44, 320);
+            const x = centerX + Math.sin(index * 2.4 + phase * 0.25) * spreadX;
+            let y = centerY + 180 - ((now * (0.04 + index % 3 * 0.012) + index * 37) % 360);
+            if (faceEffect === "sleep") y = centerY - 70 - (index % 4) * 35;
+            if (faceEffect === "police") y = centerY - 175 + (index % 2) * 350;
+            if (faceEffect === "love" || faceEffect === "embarrassed") y = centerY + Math.sin(phase) * 150;
+            const size = 7 + ((Math.sin(phase) + 1) * 5);
+            drawEffectPixel(x, y, size, size, palette[(index + Math.floor(now / 160)) % palette.length]);
+        }
+    }
+
+    if (faceEffect === "scanner") {
+        const scanY = centerY - 185 + (now * 0.18) % 370;
+        for (let x = centerX - 290; x <= centerX + 290; x += 18) drawEffectPixel(x, scanY, 12, 5, "#4CFF88");
     }
 
     if (showFire) {
@@ -1339,10 +1367,17 @@ function drawPixelEffects(now) {
 
 function animate(now) {
 
-    if (faceEffect === "dance" && !face.speaking) {
+    if (["dance", "celebration", "laugh", "super_saiyan", "powerup"].includes(faceEffect) && !face.speaking) {
         face.targetGazeX = Math.sin(now * 0.009);
         face.targetGazeY = Math.sin(now * 0.014) * 0.75;
         face.mouthTalkAmount = 0.35 + 0.3 * (Math.sin(now * 0.018) + 1) / 2;
+    } else if (faceEffect === "sleep" && !face.speaking) {
+        face.targetGazeX = 0;
+        face.targetGazeY = 0.65;
+        face.mouthTalkAmount = 0.05;
+    } else if (faceEffect === "glitch" && !face.speaking) {
+        face.targetGazeX = Math.sin(now * 0.12);
+        face.targetGazeY = Math.cos(now * 0.09);
     }
 
     face.gazeX =
@@ -1391,7 +1426,7 @@ function animate(now) {
                 1
             );
 
-    } else if (faceEffect !== "dance") {
+    } else if (!["dance", "celebration", "laugh", "super_saiyan", "powerup", "sleep", "glitch"].includes(faceEffect)) {
 
         face.mouthTalkAmount =
             lerp(

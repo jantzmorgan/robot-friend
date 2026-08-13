@@ -125,7 +125,22 @@ MEMORY_CURATOR_INSTRUCTIONS = """You curate durable memory for a companion robot
 Return only a JSON array with at most five objects containing text, category,
 and importance (0.0-1.0). Store stable preferences, people, projects, goals,
 inside jokes, promises, or milestones. Never store secrets or routine small talk.
-Use [] when nothing deserves long-term storage."""
+Never infer or guess a person's name. Store a name only when the user explicitly
+says what their name is. Use [] when nothing deserves long-term storage."""
+
+FACE_MODES = {
+    "super_saiyan": ("excited", ("super saiyan", "saiyan", "power level")),
+    "love": ("happy", ("love mode", "heart mode")),
+    "celebration": ("excited", ("celebration mode", "confetti mode", "celebrate")),
+    "sleep": ("normal", ("sleep mode", "sleepy mode", "dream mode")),
+    "spooky": ("surprised", ("spooky mode", "haunted mode")),
+    "scanner": ("curious", ("scanner mode", "scan mode")),
+    "glitch": ("surprised", ("glitch mode", "glitch out")),
+    "police": ("alert", ("police mode", "siren mode")),
+    "powerup": ("excited", ("power-up mode", "power up mode", "charge up")),
+    "laugh": ("happy", ("laughing mode", "laugh mode")),
+    "embarrassed": ("happy", ("embarrassed mode", "blush mode")),
+}
 
 
 def get_openai_client():
@@ -153,7 +168,9 @@ def robot_context(user_message: str) -> str:
         "describe it as merely simulated, and never tell the user to change it manually. "
         "For questions about the appearance before this current request, use the state "
         "snapshot as the source of truth. You also have real dance, party, and disco "
-        "modes that animate your eyes and LED colors. Asking you to cry or start crying "
+        "modes that animate your eyes and LED colors. Your other real cosmetic modes are "
+        "Super Saiyan, love, celebration, sleep, spooky, scanner, glitch, police, power-up, "
+        "laughing, and embarrassed. Asking you to cry or start crying "
         "activates your blue tears. Acknowledge these modes as things you physically do.\n\n"
         "SPOKEN TURN RULES:\n"
         "Default to one natural sentence of 5-20 words. Answer directly and stop. "
@@ -262,9 +279,10 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
     action = bool(re.search(r"\b(make|change|turn|set|switch|go|be|light)\b", lowered)) and has_color
     effect = None
     expression = None
+    mode_words = "|".join(re.escape(phrase) for _, phrases in FACE_MODES.values() for phrase in phrases)
     stop_effect = bool(re.search(
         r"\b(stop|end|clear|remove|quit|disable|turn off|no more)\b.{0,24}"
-        r"\b(fire|flames|burning|cry|crying|tears|dance|dancing|party|disco|effect|effects)\b",
+        rf"\b(fire|flames|burning|cry|crying|tears|dance|dancing|party|disco|{mode_words}|mode|effect|effects)\b",
         lowered,
     )) or any(phrase in lowered for phrase in (
         "effects off", "effect off", "no effect", "normal effect",
@@ -277,6 +295,10 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
         r"\b(cry|cries|crying|weep|weeping|tear|tears|tearful|sob|sobbing)\b", lowered
     ))
     start_dance = bool(re.search(r"\b(dance|dancing|disco|party)\b", lowered))
+    requested_mode = next((
+        (mode, mode_expression) for mode, (mode_expression, phrases) in FACE_MODES.items()
+        if any(phrase in lowered for phrase in phrases)
+    ), None)
     expression_action = bool(re.search(
         r"\b(make|change|turn|set|switch|go|get|be|look|show)\b", lowered
     ))
@@ -290,6 +312,8 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
     elif start_dance:
         effect = "dance"
         expression = "excited"
+    elif requested_mode:
+        effect, expression = requested_mode
     elif start_tears:
         effect = "tears"
         expression = "sad"
