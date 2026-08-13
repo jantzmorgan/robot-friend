@@ -201,7 +201,10 @@ def realtime_session_config() -> dict:
         "If the user pauses mid-thought, wait instead of jumping in. If interrupted, stop "
         "and listen. Briefly acknowledge an explicit goodbye or stop-listening request. "
         "Your name is Herman. For every request to play, pause, resume, skip, identify, "
-        "or change the volume of Spotify, call control_spotify and use its real result."
+        "or change the volume of Spotify, call control_spotify and use its real result. "
+        "This includes random artist songs, artist playback, albums, named playlists, "
+        "playlist shuffle, Liked Songs, and adding a song to the queue. Pass the user's "
+        "complete wording to the tool without rewriting song, artist, or playlist names."
     )
     return {
         "type": "realtime",

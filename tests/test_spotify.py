@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -27,6 +28,38 @@ class SpotifyControllerTests(unittest.TestCase):
     def test_commands_require_a_connected_account(self):
         with self.assertRaisesRegex(SpotifyError, "not connected"):
             self.controller.command("play Around the World")
+
+    def test_playlist_artist_random_liked_and_queue_commands(self):
+        self.controller.token_path.write_text(
+            '{"access_token":"test","refresh_token":"refresh","expires_at":99999999999}',
+            encoding="utf-8",
+        )
+        calls = []
+
+        def fake_request(method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            class Response:
+                status_code = 200
+                def json(self):
+                    if path == "/me/player/devices":
+                        return {"devices": [{"id": "laptop", "is_active": True}]}
+                    if path == "/me/playlists":
+                        return {"items": [{"name": "Road Trip", "uri": "spotify:playlist:road"}], "next": None}
+                    if path == "/me/tracks":
+                        return {"items": [{"track": {"uri": "spotify:track:liked"}}]}
+                    if path == "/search" and kwargs["params"]["type"] == "artist":
+                        return {"artists": {"items": [{"name": "Daft Punk", "uri": "spotify:artist:daft"}]}}
+                    return {"tracks": {"items": [{"name": "One More Time", "uri": "spotify:track:one", "artists": [{"name": "Daft Punk"}]}]}}
+            return Response()
+
+        with patch.object(self.controller, "_request", side_effect=fake_request), \
+             patch.object(self.controller, "_start_later") as start:
+            self.assertIn("Road Trip", self.controller.command("shuffle my Road Trip playlist")["message"])
+            start.assert_called_with({"context_uri": "spotify:playlist:road"}, shuffle=True)
+            self.assertIn("Daft Punk", self.controller.command("play songs by Daft Punk")["message"])
+            self.assertIn("One More Time", self.controller.command("play a random song by Daft Punk")["message"])
+            self.assertIn("Liked Songs", self.controller.command("shuffle my liked songs")["message"])
+            self.assertEqual(self.controller.command("add One More Time to the queue")["action"], "queue")
 
 
 if __name__ == "__main__":

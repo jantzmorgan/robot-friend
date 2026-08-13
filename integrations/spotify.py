@@ -20,7 +20,10 @@ class SpotifyError(RuntimeError):
 class SpotifyController:
     API = "https://api.spotify.com/v1"
     ACCOUNTS = "https://accounts.spotify.com"
-    SCOPES = "user-read-playback-state user-read-currently-playing user-modify-playback-state"
+    SCOPES = (
+        "user-read-playback-state user-read-currently-playing user-modify-playback-state "
+        "playlist-read-private playlist-read-collaborative user-library-read"
+    )
 
     def __init__(self, client_id: str, redirect_uri: str, token_path: Path):
         self.client_id = client_id.strip()
@@ -141,6 +144,44 @@ class SpotifyController:
         self._request("PUT", "/me/player", json={"device_ids": [device["id"]], "play": False})
         time.sleep(0.35)
 
+    def _search(self, query: str, item_type: str, limit: int = 1) -> list[dict]:
+        result = self._request(
+            "GET", "/search", params={"q": query, "type": item_type, "limit": min(10, limit)}
+        ).json()
+        return (result.get(f"{item_type}s") or {}).get("items") or []
+
+    def _start_later(self, body: dict, shuffle: bool | None = None) -> None:
+        def start() -> None:
+            if shuffle is not None:
+                self._request("PUT", "/me/player/shuffle", params={"state": str(shuffle).lower()})
+            self._request("PUT", "/me/player/play", json=body)
+        timer = threading.Timer(2.5, start)
+        timer.daemon = True
+        timer.start()
+
+    @staticmethod
+    def _clean_subject(text: str) -> str:
+        return re.sub(
+            r"\s+(?:on|from) spotify\s*$|\s+(?:on )?shuffle\s*$", "", text,
+            flags=re.I,
+        ).strip(" .?!\"")
+
+    def _find_playlist(self, name: str) -> dict:
+        wanted = re.sub(r"[^a-z0-9]", "", name.lower())
+        candidates: list[dict] = []
+        for offset in range(0, 200, 50):
+            page = self._request("GET", "/me/playlists", params={"limit": 50, "offset": offset}).json()
+            candidates.extend(page.get("items") or [])
+            if not page.get("next"):
+                break
+        exact = next((item for item in candidates if re.sub(r"[^a-z0-9]", "", item.get("name", "").lower()) == wanted), None)
+        if exact:
+            return exact
+        partial = next((item for item in candidates if wanted in re.sub(r"[^a-z0-9]", "", item.get("name", "").lower())), None)
+        if partial:
+            return partial
+        raise SpotifyError(f"I couldn't find a playlist named {name}.")
+
     def command(self, command: str) -> dict:
         text = command.strip()
         lowered = text.lower()
@@ -170,19 +211,77 @@ class SpotifyController:
             level = max(0, min(100, int(volume.group(1))))
             self._request("PUT", "/me/player/volume", params={"volume_percent": level})
             return {"action": "volume", "message": f"Spotify volume set to {level} percent."}
+
+        liked = bool(re.search(r"\b(liked|saved) songs?\b", lowered))
+        if liked:
+            items = self._request("GET", "/me/tracks", params={"limit": 50}).json().get("items") or []
+            uris = [((item.get("track") or item.get("item") or {}).get("uri")) for item in items]
+            uris = [uri for uri in uris if uri]
+            if not uris:
+                raise SpotifyError("Your Spotify Liked Songs list is empty.")
+            if "shuffle" in lowered or "random" in lowered:
+                secrets.SystemRandom().shuffle(uris)
+            self._start_later({"uris": uris})
+            return {"action": "play", "message": "Playing your Liked Songs."}
+
+        playlist_match = re.search(
+            r"(?:playlist(?: called| named)?\s+(.+)|(?:play|shuffle)\s+(?:my\s+)?(.+?)\s+playlist|songs? (?:from|on)\s+(.+))$",
+            text, re.I,
+        )
+        if playlist_match:
+            playlist_name = self._clean_subject(next(group for group in playlist_match.groups() if group))
+            playlist = self._find_playlist(playlist_name)
+            shuffled = "shuffle" in lowered or "random" in lowered
+            self._start_later({"context_uri": playlist["uri"]}, shuffle=shuffled)
+            wording = "Shuffling" if shuffled else "Playing"
+            return {"action": "play", "message": f"{wording} your {playlist['name']} playlist."}
+
+        album_match = re.search(r"\b(?:album)\s+(.+)$", text, re.I)
+        if album_match:
+            album_name = self._clean_subject(album_match.group(1))
+            albums = self._search(album_name, "album")
+            if not albums:
+                raise SpotifyError(f"I couldn't find the album {album_name}.")
+            album = albums[0]
+            self._start_later({"context_uri": album["uri"]})
+            return {"action": "play", "message": f"Playing the album {album['name']}."}
+
+        random_artist = re.search(r"\b(?:random|any) song\s+by\s+(.+)$", text, re.I)
+        if random_artist:
+            artist_name = self._clean_subject(random_artist.group(1))
+            tracks = self._search(f'artist:"{artist_name}"', "track", limit=10)
+            if not tracks:
+                raise SpotifyError(f"I couldn't find songs by {artist_name}.")
+            track = secrets.choice(tracks)
+            self._start_later({"uris": [track["uri"]]})
+            artists = ", ".join(artist["name"] for artist in track.get("artists", []))
+            return {"action": "play", "message": f"Playing {track['name']} by {artists}."}
+
+        artist_match = re.search(r"\b(?:songs?|music)\s+by\s+(.+)$|\bplay\s+(?:some\s+)?(.+?)\s+(?:songs|music)\s*$", text, re.I)
+        if artist_match:
+            artist_name = self._clean_subject(next(group for group in artist_match.groups() if group))
+            artists = self._search(artist_name, "artist")
+            if not artists:
+                raise SpotifyError(f"I couldn't find the artist {artist_name}.")
+            artist = artists[0]
+            self._start_later({"context_uri": artist["uri"]}, shuffle=True)
+            return {"action": "play", "message": f"Shuffling songs by {artist['name']}."}
+
+        queue_request = bool(re.search(r"\b(?:play .+ next|add .+ to (?:the )?queue|queue .+)\b", lowered))
         query = re.sub(r"^.*?\bplay\b\s+", "", text, flags=re.I).strip()
+        if queue_request and query == text:
+            query = re.sub(r"^(?:add|queue)\s+", "", text, flags=re.I).strip()
         query = re.sub(r"\s+(?:on|from) spotify\s*$", "", query, flags=re.I).strip()
-        if not query or query == text:
+        query = re.sub(r"\s+(?:to (?:the )?queue|next)$", "", query, flags=re.I).strip()
+        if not query or (query == text and not queue_request):
             raise SpotifyError("Tell me what you want Spotify to play.")
-        result = self._request("GET", "/search", params={"q": query, "type": "track", "limit": 1}).json()
-        items = (result.get("tracks") or {}).get("items") or []
+        items = self._search(query, "track")
         if not items:
             raise SpotifyError(f"I couldn't find {query} on Spotify.")
         track = items[0]
-        timer = threading.Timer(
-            2.5, lambda: self._request("PUT", "/me/player/play", json={"uris": [track["uri"]]})
-        )
-        timer.daemon = True
-        timer.start()
         artists = ", ".join(artist["name"] for artist in track.get("artists", []))
+        if queue_request:
+            self._request("POST", "/me/player/queue", params={"uri": track["uri"]})
+            return {"action": "queue", "message": f"Queued {track['name']} by {artists}."}
+        self._start_later({"uris": [track["uri"]]})
         return {"action": "play", "message": f"Playing {track['name']} by {artists}."}
