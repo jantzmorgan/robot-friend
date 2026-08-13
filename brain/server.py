@@ -7,6 +7,7 @@ drivers can later replace the simulated implementations through robot.factory.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import logging
 import os
@@ -16,7 +17,8 @@ import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_from_directory
+import httpx
+from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
@@ -46,6 +48,10 @@ conversation_lock = threading.RLock()
 CURRENT_MEMORY_SUBJECT = os.getenv("ROBOT_MEMORY_SUBJECT", "primary_user")
 wake_listener = None
 wake_command_lock = threading.Lock()
+
+
+def realtime_enabled() -> bool:
+    return os.getenv("ROBOT_REALTIME", "1").lower() not in {"0", "false", "off", "no"}
 
 FACE_COLORS = {
     "red": "#FF3B30", "orange": "#FF8A2D", "herman orange": "#FF5A2D",
@@ -94,6 +100,42 @@ def robot_context(user_message: str) -> str:
         "conversation. Only become detailed when the user explicitly asks for detail.\n\n"
         f"{memory}"
     )
+
+
+def realtime_session_config() -> dict:
+    """Build a short, stateful voice session without exposing the API key."""
+    instructions = robot_context("live spoken conversation") + (
+        "\n\nLIVE CONVERSATION RULES:\n"
+        "You are speaking aloud through the robot's face. Sound warm, compact, and "
+        "slightly robotic, but never imitate a specific copyrighted character. "
+        "Usually answer in one sentence and under 20 words. Do not narrate your "
+        "reasoning or say you are an AI. Treat follow-up speech as the same conversation. "
+        "If the user pauses mid-thought, wait instead of jumping in. If interrupted, stop "
+        "and listen. Briefly acknowledge an explicit goodbye or stop-listening request."
+    )
+    return {
+        "type": "realtime",
+        "model": os.getenv("ROBOT_REALTIME_MODEL", "gpt-realtime-2.1-mini"),
+        "output_modalities": ["audio"],
+        "instructions": instructions,
+        "max_output_tokens": int(os.getenv("ROBOT_REALTIME_MAX_OUTPUT_TOKENS", "120")),
+        "audio": {
+            "input": {
+                "noise_reduction": {"type": "far_field"},
+                "transcription": {"model": "gpt-realtime-whisper", "language": "en"},
+                "turn_detection": {
+                    "type": "semantic_vad",
+                    "eagerness": os.getenv("ROBOT_REALTIME_EAGERNESS", "medium"),
+                    "create_response": True,
+                    "interrupt_response": True,
+                },
+            },
+            "output": {
+                "voice": os.getenv("ROBOT_REALTIME_VOICE", "cedar"),
+                "speed": float(os.getenv("ROBOT_REALTIME_SPEED", "1.05")),
+            },
+        },
+    }
 
 
 def curate_memory(user_message: str, reply: str) -> None:
@@ -314,7 +356,8 @@ def handle_wake_word() -> None:
         # This callback runs on the listener thread, so it must not wait for
         # that same thread to acknowledge the pause.
         wake_listener.pause(wait=False)
-        threading.Thread(target=process_wake_command, daemon=True).start()
+        if not realtime_enabled():
+            threading.Thread(target=process_wake_command, daemon=True).start()
 
 
 def start_wake_word() -> None:
@@ -450,6 +493,95 @@ def resume_wake():
         wake_listener.resume()
     runtime.state.update(listening=True, wake_detected=False, wake_paused=False)
     return jsonify(status="wake word resumed")
+
+
+@app.post("/realtime/session")
+def create_realtime_session():
+    """Exchange the browser's WebRTC offer for an OpenAI answer SDP."""
+    if not realtime_enabled():
+        return jsonify(error="Realtime conversation is disabled"), 409
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    offer = request.get_data(as_text=True).strip()
+    if not offer:
+        raise ValueError("No WebRTC offer supplied")
+
+    if wake_listener is not None:
+        wake_listener.pause(wait=True)
+    runtime.state.update(
+        listening=True, speaking=False, wake_detected=True,
+        wake_paused=True, mode="listening",
+    )
+    safety_id = hashlib.sha256(CURRENT_MEMORY_SUBJECT.encode("utf-8")).hexdigest()
+    upstream = httpx.post(
+        "https://api.openai.com/v1/realtime/calls",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "OpenAI-Safety-Identifier": safety_id,
+        },
+        files={
+            "sdp": (None, offer),
+            "session": (None, json.dumps(realtime_session_config())),
+        },
+        timeout=30.0,
+    )
+    if upstream.is_error:
+        app.logger.error("Realtime session failed (%s): %s", upstream.status_code, upstream.text)
+        return jsonify(error="Could not start the live voice session"), upstream.status_code
+    return Response(upstream.text, status=200, content_type="application/sdp")
+
+
+@app.post("/realtime/event")
+def realtime_event():
+    state = str((request.get_json(silent=True) or {}).get("state", "")).lower()
+    changes = {
+        "listening": dict(listening=True, speaking=False, mode="listening"),
+        "thinking": dict(listening=False, speaking=False, mode="thinking"),
+        "speaking": dict(listening=False, speaking=True, mode="speaking"),
+        "idle": dict(listening=True, speaking=False, mode="idle"),
+    }
+    if state not in changes:
+        raise ValueError("Unknown realtime state")
+    runtime.state.update(**changes[state])
+    return jsonify(runtime.state.snapshot())
+
+
+@app.post("/realtime/user")
+def realtime_user_turn():
+    message = str((request.get_json(silent=True) or {}).get("message", "")).strip()
+    if message:
+        apply_spoken_face_colors(message)
+    return jsonify(applied=bool(message), state=runtime.state.snapshot())
+
+
+@app.post("/realtime/turn")
+def save_realtime_turn():
+    data = request.get_json(silent=True) or {}
+    user_message = str(data.get("user", "")).strip()
+    reply = str(data.get("assistant", "")).strip()
+    if not user_message and not reply:
+        raise ValueError("No conversation turn supplied")
+    with conversation_lock:
+        if user_message:
+            conversation.append({"role": "user", "content": user_message})
+        if reply:
+            conversation.append({"role": "assistant", "content": reply})
+        del conversation[:-30]
+    if user_message and reply:
+        threading.Thread(target=curate_memory, args=(user_message, reply), daemon=True).start()
+    return jsonify(saved=True)
+
+
+@app.post("/realtime/end")
+def end_realtime_session():
+    if wake_listener is not None:
+        wake_listener.resume()
+    runtime.state.update(
+        listening=True, speaking=False, wake_detected=False,
+        wake_paused=False, mode="idle",
+    )
+    return jsonify(status="realtime conversation ended")
 
 
 @app.post("/chat")

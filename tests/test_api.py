@@ -1,12 +1,13 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 os.environ["ROBOT_HARDWARE"] = "sim"
 os.environ["ROBOT_CAMERA"] = "sim"
 os.environ["ROBOT_MEMORY_PATH"] = os.path.join(tempfile.gettempdir(), "robot_friend_test.db")
 
-from brain.server import app, apply_spoken_face_colors, runtime
+from brain.server import app, apply_spoken_face_colors, realtime_session_config, runtime
 
 
 class ApiTests(unittest.TestCase):
@@ -70,6 +71,41 @@ class ApiTests(unittest.TestCase):
         state = runtime.state.snapshot()
         self.assertEqual(state["expression"], "annoyed")
         self.assertEqual(state["face_effect"], "auto")
+
+    def test_realtime_config_uses_semantic_vad_and_short_audio_output(self):
+        config = realtime_session_config()
+        self.assertEqual(config["output_modalities"], ["audio"])
+        turn = config["audio"]["input"]["turn_detection"]
+        self.assertEqual(turn["type"], "semantic_vad")
+        self.assertTrue(turn["create_response"])
+        self.assertTrue(turn["interrupt_response"])
+        self.assertIn("under 20 words", config["instructions"])
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "ROBOT_REALTIME": "1"})
+    @patch("brain.server.httpx.post")
+    def test_realtime_sdp_is_proxied_without_exposing_key(self, post):
+        upstream = Mock(status_code=200, text="answer-sdp", is_error=False)
+        post.return_value = upstream
+        response = self.client.post(
+            "/realtime/session", data="offer-sdp", content_type="application/sdp"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_data(as_text=True), "answer-sdp")
+        kwargs = post.call_args.kwargs
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
+        self.assertIn("semantic_vad", kwargs["files"]["session"][1])
+
+    def test_realtime_state_and_turn_endpoints(self):
+        response = self.client.post("/realtime/event", json={"state": "thinking"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(runtime.state.snapshot()["mode"], "thinking")
+        response = self.client.post(
+            "/realtime/turn", json={"user": "Hello", "assistant": "Hey there."}
+        )
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post("/realtime/end")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(runtime.state.snapshot()["wake_detected"])
 
 
 if __name__ == "__main__":

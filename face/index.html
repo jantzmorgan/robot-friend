@@ -2066,6 +2066,26 @@ let recognitionRestartTimer =
 let brainRequestActive =
     false;
 
+let realtimePeer = null;
+let realtimeChannel = null;
+let realtimeMic = null;
+let realtimeAudio = null;
+let realtimeAudioContext = null;
+let realtimeAnalyser = null;
+let realtimeAnimationFrame = null;
+let realtimeIdleTimer = null;
+let realtimeStarting = false;
+let realtimeUserTranscript = "";
+let realtimeAssistantTranscript = "";
+let realtimeExitRequested = false;
+let realtimeAudioLastLoud = 0;
+
+const REALTIME_IDLE_MS = 30000;
+const REALTIME_EXIT_PHRASES = new Set([
+    "stop listening", "end conversation", "goodbye", "go to sleep",
+    "that's all", "that is all", "never mind", "nevermind"
+]);
+
 
 /* ============================================================
    CAMERA / VISION STATE
@@ -2255,6 +2275,198 @@ setInterval(
 
 
 /* ============================================================
+   OPENAI REALTIME CONVERSATION
+   ============================================================ */
+
+function normalizedRealtimeText(text) {
+    return text.toLowerCase().replace(/[^a-z' ]/g, "").trim();
+}
+
+function resetRealtimeIdleTimer() {
+    if (realtimeIdleTimer) clearTimeout(realtimeIdleTimer);
+    realtimeIdleTimer = setTimeout(() => endRealtimeConversation(), REALTIME_IDLE_MS);
+}
+
+async function reportRealtimeState(state) {
+    try {
+        await postRobotEndpoint("/realtime/event", {state});
+    } catch (error) {
+        console.warn("Could not report realtime state:", error);
+    }
+}
+
+function monitorRealtimeAudio(stream) {
+    realtimeAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = realtimeAudioContext.createMediaStreamSource(stream);
+    realtimeAnalyser = realtimeAudioContext.createAnalyser();
+    realtimeAnalyser.fftSize = 256;
+    source.connect(realtimeAnalyser);
+    const samples = new Uint8Array(realtimeAnalyser.fftSize);
+    let backendSpeaking = false;
+
+    const tick = () => {
+        if (!realtimeAnalyser || !realtimePeer) return;
+        realtimeAnalyser.getByteTimeDomainData(samples);
+        let energy = 0;
+        for (const value of samples) {
+            const centered = (value - 128) / 128;
+            energy += centered * centered;
+        }
+        const loud = Math.sqrt(energy / samples.length) > 0.012;
+        if (loud) realtimeAudioLastLoud = performance.now();
+        const audible = loud || performance.now() - realtimeAudioLastLoud < 120;
+        face.speaking = audible;
+        if (audible && !backendSpeaking) {
+            backendSpeaking = true;
+            reportRealtimeState("speaking");
+        }
+        realtimeAnimationFrame = requestAnimationFrame(tick);
+    };
+    tick();
+}
+
+async function saveRealtimeTurn() {
+    if (!realtimeUserTranscript && !realtimeAssistantTranscript) return;
+    try {
+        await postRobotEndpoint("/realtime/turn", {
+            user: realtimeUserTranscript,
+            assistant: realtimeAssistantTranscript
+        });
+    } catch (error) {
+        console.warn("Could not save realtime turn:", error);
+    }
+}
+
+async function handleRealtimeEvent(event) {
+    switch (event.type) {
+        case "input_audio_buffer.speech_started":
+            realtimeUserTranscript = "";
+            realtimeAssistantTranscript = "";
+            realtimeExitRequested = false;
+            if (realtimeIdleTimer) clearTimeout(realtimeIdleTimer);
+            setExpression("curious");
+            await reportRealtimeState("listening");
+            break;
+        case "input_audio_buffer.speech_stopped":
+            setExpression("thinking");
+            await reportRealtimeState("thinking");
+            break;
+        case "conversation.item.input_audio_transcription.completed":
+        case "input_audio_transcription.completed": {
+            realtimeUserTranscript = (event.transcript || "").trim();
+            if (realtimeUserTranscript) {
+                postRobotEndpoint("/realtime/user", {message: realtimeUserTranscript});
+                realtimeExitRequested = REALTIME_EXIT_PHRASES.has(
+                    normalizedRealtimeText(realtimeUserTranscript)
+                );
+            }
+            break;
+        }
+        case "response.output_audio_transcript.delta":
+            realtimeAssistantTranscript += event.delta || "";
+            break;
+        case "response.output_audio_transcript.done":
+            realtimeAssistantTranscript = event.transcript || realtimeAssistantTranscript;
+            break;
+        case "response.done":
+            await saveRealtimeTurn();
+            if (realtimeExitRequested) {
+                await endRealtimeConversation();
+            } else {
+                setExpression("curious");
+                await reportRealtimeState("listening");
+                resetRealtimeIdleTimer();
+            }
+            break;
+        case "error":
+            console.error("Realtime error:", event.error || event);
+            break;
+    }
+}
+
+async function startRealtimeConversation() {
+    if (realtimePeer || realtimeStarting) return;
+    realtimeStarting = true;
+    try {
+        await postRobotEndpoint("/wake/pause");
+        realtimeMic = await navigator.mediaDevices.getUserMedia({
+            audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+            video: false
+        });
+        realtimePeer = new RTCPeerConnection();
+        realtimeAudio = document.createElement("audio");
+        realtimeAudio.autoplay = true;
+        realtimePeer.ontrack = event => {
+            const stream = event.streams[0];
+            realtimeAudio.srcObject = stream;
+            realtimeAudio.play().catch(() => {});
+            monitorRealtimeAudio(stream);
+        };
+        realtimeMic.getTracks().forEach(track => realtimePeer.addTrack(track, realtimeMic));
+        realtimeChannel = realtimePeer.createDataChannel("oai-events");
+        realtimeChannel.onmessage = message => {
+            try { handleRealtimeEvent(JSON.parse(message.data)); }
+            catch (error) { console.warn("Bad realtime event:", error); }
+        };
+        realtimeChannel.onopen = () => {
+            setExpression("curious");
+            reportRealtimeState("listening");
+            resetRealtimeIdleTimer();
+        };
+        realtimePeer.onconnectionstatechange = () => {
+            if (["failed", "disconnected", "closed"].includes(realtimePeer?.connectionState)) {
+                endRealtimeConversation();
+            }
+        };
+
+        const offer = await realtimePeer.createOffer();
+        await realtimePeer.setLocalDescription(offer);
+        const response = await fetch(`${BRAIN_URL}/realtime/session`, {
+            method: "POST",
+            headers: {"Content-Type": "application/sdp"},
+            body: offer.sdp
+        });
+        if (!response.ok) {
+            let detail = "Could not start realtime voice.";
+            try { detail = (await response.json()).error || detail; } catch (_) {}
+            throw new Error(detail);
+        }
+        await realtimePeer.setRemoteDescription({type: "answer", sdp: await response.text()});
+    } catch (error) {
+        console.error("Realtime conversation could not start:", error);
+        setExpression("sad");
+        await endRealtimeConversation();
+    } finally {
+        realtimeStarting = false;
+    }
+}
+
+async function endRealtimeConversation() {
+    if (realtimeIdleTimer) clearTimeout(realtimeIdleTimer);
+    realtimeIdleTimer = null;
+    if (realtimeAnimationFrame) cancelAnimationFrame(realtimeAnimationFrame);
+    realtimeAnimationFrame = null;
+    face.speaking = false;
+    realtimeAnalyser = null;
+    if (realtimeAudioContext) realtimeAudioContext.close().catch(() => {});
+    realtimeAudioContext = null;
+    if (realtimeMic) realtimeMic.getTracks().forEach(track => track.stop());
+    realtimeMic = null;
+    const peer = realtimePeer;
+    realtimePeer = null;
+    realtimeChannel = null;
+    if (peer) peer.close();
+    if (realtimeAudio) realtimeAudio.srcObject = null;
+    realtimeAudio = null;
+    realtimeExitRequested = false;
+    backendConversationActive = false;
+    setExpression("normal");
+    try { await postRobotEndpoint("/realtime/end"); }
+    catch (error) { console.warn("Could not finish realtime session:", error); }
+}
+
+
+/* ============================================================
    WAKE WORD BRIDGE
    ============================================================ */
 
@@ -2300,7 +2512,8 @@ async function checkWakeWord() {
 
 if (
     data.speaking &&
-    !face.speaking
+    !face.speaking &&
+    !realtimePeer
 ) {
 
     face.speaking =
@@ -2310,7 +2523,8 @@ if (
 
 if (
     !data.speaking &&
-    face.speaking
+    face.speaking &&
+    !realtimePeer
 ) {
 
     face.speaking =
@@ -2474,16 +2688,10 @@ async function handleWakeWord() {
     }
 
 
-    /*
-        Python owns the post-wake microphone turn. It records the command,
-        transcribes it, runs the brain/color logic, speaks, and resumes the
-        wake listener. Do not start browser recognition here or Windows will
-        have two microphone systems competing again.
-    */
-
-    await wait(
-        100
-    );
+    /* The wake listener releases the microphone, then WebRTC owns the live
+       session until an exit phrase or idle timeout returns it. */
+    await wait(200);
+    await startRealtimeConversation();
 }
 
 
