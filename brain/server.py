@@ -48,10 +48,44 @@ conversation_lock = threading.RLock()
 CURRENT_MEMORY_SUBJECT = os.getenv("ROBOT_MEMORY_SUBJECT", "primary_user")
 wake_listener = None
 wake_command_lock = threading.Lock()
+realtime_guard_lock = threading.Lock()
+realtime_guard_generation = 0
 
 
 def realtime_enabled() -> bool:
     return os.getenv("ROBOT_REALTIME", "1").lower() not in {"0", "false", "off", "no"}
+
+
+def cancel_realtime_guard() -> None:
+    global realtime_guard_generation
+    with realtime_guard_lock:
+        realtime_guard_generation += 1
+
+
+def recover_stale_realtime(generation: int) -> None:
+    """Never let a vanished browser leave the wake microphone paused."""
+    with realtime_guard_lock:
+        if generation != realtime_guard_generation:
+            return
+    state = runtime.state.snapshot()
+    if state["wake_paused"]:
+        app.logger.warning("Realtime browser disappeared; resuming wake-word listener")
+        if wake_listener is not None:
+            wake_listener.resume()
+        runtime.state.update(
+            listening=True, speaking=False, wake_detected=False,
+            wake_paused=False, mode="idle",
+        )
+
+
+def arm_realtime_guard(timeout: float = 12.0) -> None:
+    global realtime_guard_generation
+    with realtime_guard_lock:
+        realtime_guard_generation += 1
+        generation = realtime_guard_generation
+    timer = threading.Timer(timeout, recover_stale_realtime, args=(generation,))
+    timer.daemon = True
+    timer.start()
 
 FACE_COLORS = {
     "red": "#FF3B30", "orange": "#FF8A2D", "herman orange": "#FF5A2D",
@@ -356,7 +390,11 @@ def handle_wake_word() -> None:
         # This callback runs on the listener thread, so it must not wait for
         # that same thread to acknowledge the pause.
         wake_listener.pause(wait=False)
-        if not realtime_enabled():
+        if realtime_enabled():
+            # If the face page is closed, denied microphone access, or fails
+            # before WebRTC connects, restore wake mode automatically.
+            arm_realtime_guard()
+        else:
             threading.Thread(target=process_wake_command, daemon=True).start()
 
 
@@ -513,6 +551,7 @@ def create_realtime_session():
         listening=True, speaking=False, wake_detected=True,
         wake_paused=True, mode="listening",
     )
+    arm_realtime_guard(10.0)
     safety_id = hashlib.sha256(CURRENT_MEMORY_SUBJECT.encode("utf-8")).hexdigest()
     upstream = httpx.post(
         "https://api.openai.com/v1/realtime/calls",
@@ -544,7 +583,15 @@ def realtime_event():
     if state not in changes:
         raise ValueError("Unknown realtime state")
     runtime.state.update(**changes[state])
+    arm_realtime_guard(10.0)
     return jsonify(runtime.state.snapshot())
+
+
+@app.post("/realtime/heartbeat")
+def realtime_heartbeat():
+    if runtime.state.snapshot()["wake_paused"]:
+        arm_realtime_guard(10.0)
+    return jsonify(status="alive")
 
 
 @app.post("/realtime/user")
@@ -575,6 +622,7 @@ def save_realtime_turn():
 
 @app.post("/realtime/end")
 def end_realtime_session():
+    cancel_realtime_guard()
     if wake_listener is not None:
         wake_listener.resume()
     runtime.state.update(

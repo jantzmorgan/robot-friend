@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -7,7 +8,10 @@ os.environ["ROBOT_HARDWARE"] = "sim"
 os.environ["ROBOT_CAMERA"] = "sim"
 os.environ["ROBOT_MEMORY_PATH"] = os.path.join(tempfile.gettempdir(), "robot_friend_test.db")
 
-from brain.server import app, apply_spoken_face_colors, realtime_session_config, runtime
+from brain.server import (
+    app, apply_spoken_face_colors, arm_realtime_guard,
+    realtime_session_config, runtime,
+)
 
 
 class ApiTests(unittest.TestCase):
@@ -106,6 +110,21 @@ class ApiTests(unittest.TestCase):
         response = self.client.post("/realtime/end")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(runtime.state.snapshot()["wake_detected"])
+
+    def test_realtime_watchdog_recovers_abandoned_browser_session(self):
+        runtime.state.update(
+            listening=False, wake_detected=True, wake_paused=True, mode="thinking"
+        )
+        arm_realtime_guard(0.01)
+        time.sleep(0.04)
+        state = runtime.state.snapshot()
+        self.assertTrue(state["listening"])
+        self.assertFalse(state["wake_paused"])
+        self.assertFalse(state["wake_detected"])
+        self.assertEqual(state["mode"], "idle")
+
+    def test_realtime_heartbeat_is_available(self):
+        self.assertEqual(self.client.post("/realtime/heartbeat").status_code, 200)
 
 
 if __name__ == "__main__":
