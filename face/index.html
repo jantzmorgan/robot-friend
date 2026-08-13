@@ -2389,10 +2389,16 @@ async function startRealtimeConversation() {
     realtimeStarting = true;
     try {
         await postRobotEndpoint("/wake/pause");
-        realtimeMic = await navigator.mediaDevices.getUserMedia({
-            audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
-            video: false
-        });
+        const reusableMic = realtimeMic && realtimeMic.getAudioTracks().some(
+            track => track.readyState === "live"
+        );
+        if (!reusableMic) {
+            realtimeMic = await navigator.mediaDevices.getUserMedia({
+                audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+                video: false
+            });
+        }
+        realtimeMic.getAudioTracks().forEach(track => { track.enabled = true; });
         realtimePeer = new RTCPeerConnection();
         realtimeAudio = document.createElement("audio");
         realtimeAudio.autoplay = true;
@@ -2450,8 +2456,12 @@ async function endRealtimeConversation() {
     realtimeAnalyser = null;
     if (realtimeAudioContext) realtimeAudioContext.close().catch(() => {});
     realtimeAudioContext = null;
-    if (realtimeMic) realtimeMic.getTracks().forEach(track => track.stop());
-    realtimeMic = null;
+    // Keep the already-approved stream alive while the face page stays open.
+    // Disabling its audio lets the wake listener take over without asking the
+    // user for microphone permission again on the next conversation.
+    if (realtimeMic) {
+        realtimeMic.getAudioTracks().forEach(track => { track.enabled = false; });
+    }
     const peer = realtimePeer;
     realtimePeer = null;
     realtimeChannel = null;
@@ -2464,6 +2474,10 @@ async function endRealtimeConversation() {
     try { await postRobotEndpoint("/realtime/end"); }
     catch (error) { console.warn("Could not finish realtime session:", error); }
 }
+
+window.addEventListener("beforeunload", () => {
+    if (realtimeMic) realtimeMic.getTracks().forEach(track => track.stop());
+});
 
 
 /* ============================================================
