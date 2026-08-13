@@ -136,9 +136,10 @@ class ApiTests(unittest.TestCase):
         upstream = Mock(status_code=200, is_error=False)
         upstream.json.return_value = {"value": "ek_test"}
         post.return_value = upstream
-        response = self.client.post("/realtime/token")
+        response = self.client.post("/realtime/token", json={"client_id": "face-test"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["value"], "ek_test")
+        self.assertEqual(response.get_json()["robot_client_id"], "face-test")
         self.assertIn("/v1/realtime/client_secrets", post.call_args.args[0])
         self.assertIn("session", post.call_args.kwargs["json"])
 

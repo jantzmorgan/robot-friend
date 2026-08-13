@@ -60,6 +60,8 @@ wake_listener = None
 wake_command_lock = threading.Lock()
 realtime_guard_lock = threading.Lock()
 realtime_guard_generation = 0
+realtime_owner_lock = threading.Lock()
+realtime_owner: str | None = None
 
 
 def realtime_enabled() -> bool:
@@ -630,6 +632,12 @@ def create_realtime_token():
     if not ready:
         runtime.state.update(last_error=reason)
         return jsonify(error=reason), 503
+    client_id = str((request.get_json(silent=True) or {}).get("client_id", "")).strip()
+    if not client_id:
+        raise ValueError("Realtime client_id is required")
+    global realtime_owner
+    with realtime_owner_lock:
+        realtime_owner = client_id
     if wake_listener is not None:
         wake_listener.pause(wait=True)
     runtime.state.update(
@@ -657,7 +665,9 @@ def create_realtime_token():
         runtime.state.update(last_error=f"Realtime token failed: {detail}")
         return jsonify(error=detail), upstream.status_code
     runtime.state.update(last_error=None)
-    return jsonify(upstream.json())
+    payload = upstream.json()
+    payload["robot_client_id"] = client_id
+    return jsonify(payload)
 
 
 @app.post("/realtime/event")
@@ -678,6 +688,11 @@ def realtime_event():
 
 @app.post("/realtime/heartbeat")
 def realtime_heartbeat():
+    client_id = str((request.get_json(silent=True) or {}).get("client_id", "")).strip()
+    with realtime_owner_lock:
+        owner = realtime_owner
+    if owner and client_id != owner:
+        return jsonify(error="This face was replaced by a newer Jarvis face"), 409
     if runtime.state.snapshot()["wake_paused"]:
         arm_realtime_guard(10.0)
     return jsonify(status="alive")
@@ -711,6 +726,12 @@ def save_realtime_turn():
 
 @app.post("/realtime/end")
 def end_realtime_session():
+    client_id = str((request.get_json(silent=True) or {}).get("client_id", "")).strip()
+    global realtime_owner
+    with realtime_owner_lock:
+        if realtime_owner and client_id and client_id != realtime_owner:
+            return jsonify(status="superseded face already disconnected")
+        realtime_owner = None
     cancel_realtime_guard()
     if wake_listener is not None:
         wake_listener.resume()

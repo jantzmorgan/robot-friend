@@ -2080,12 +2080,26 @@ let realtimeUserTranscript = "";
 let realtimeAssistantTranscript = "";
 let realtimeExitRequested = false;
 let realtimeAudioLastLoud = 0;
+const robotClientId = window.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const robotFaceChannel = "BroadcastChannel" in window
+    ? new BroadcastChannel("jarvis-single-face")
+    : null;
 
 const REALTIME_IDLE_MS = 30000;
 const REALTIME_EXIT_PHRASES = new Set([
     "stop listening", "end conversation", "goodbye", "go to sleep",
     "that's all", "that is all", "never mind", "nevermind"
 ]);
+
+if (robotFaceChannel) {
+    robotFaceChannel.onmessage = event => {
+        if (event.data?.type === "face-claim" && event.data.clientId !== robotClientId) {
+            endRealtimeConversation();
+        }
+    };
+    robotFaceChannel.postMessage({type: "face-claim", clientId: robotClientId});
+}
 
 
 /* ============================================================
@@ -2390,7 +2404,11 @@ async function startRealtimeConversation() {
     realtimeStarting = true;
     try {
         await postRobotEndpoint("/wake/pause");
-        const tokenResponse = await fetch(`${BRAIN_URL}/realtime/token`, {method: "POST"});
+        const tokenResponse = await fetch(`${BRAIN_URL}/realtime/token`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({client_id: robotClientId})
+        });
         const tokenData = await tokenResponse.json();
         if (!tokenResponse.ok || !tokenData.value) {
             throw new Error(tokenData.error || "Could not create a Realtime voice token.");
@@ -2419,7 +2437,16 @@ async function startRealtimeConversation() {
             reportRealtimeState("listening");
             resetRealtimeIdleTimer();
             realtimeHeartbeatTimer = setInterval(
-                () => postRobotEndpoint("/realtime/heartbeat").catch(() => {}),
+                async () => {
+                    try {
+                        const result = await postRobotEndpoint(
+                            "/realtime/heartbeat", {client_id: robotClientId}
+                        );
+                        if (result?.error) await endRealtimeConversation();
+                    } catch (_) {
+                        await endRealtimeConversation();
+                    }
+                },
                 3000
             );
         };
@@ -2496,13 +2523,16 @@ async function endRealtimeConversation() {
     realtimeExitRequested = false;
     backendConversationActive = false;
     setExpression("normal");
-    try { await postRobotEndpoint("/realtime/end"); }
+    try { await postRobotEndpoint("/realtime/end", {client_id: robotClientId}); }
     catch (error) { console.warn("Could not finish realtime session:", error); }
 }
 
 window.addEventListener("pagehide", () => {
     if (realtimeMic) realtimeMic.getTracks().forEach(track => track.stop());
-    navigator.sendBeacon(`${BRAIN_URL}/realtime/end`, new Blob([], {type: "text/plain"}));
+    navigator.sendBeacon(
+        `${BRAIN_URL}/realtime/end`,
+        new Blob([JSON.stringify({client_id: robotClientId})], {type: "application/json"})
+    );
 });
 
 
