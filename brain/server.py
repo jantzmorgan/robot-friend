@@ -161,7 +161,9 @@ def realtime_session_config() -> dict:
         "You are speaking aloud through the robot's face. Sound warm, compact, and "
         "slightly robotic, but never imitate a specific copyrighted character. "
         "Usually answer in one sentence and under 20 words. Do not narrate your "
-        "reasoning or say you are an AI. Treat follow-up speech as the same conversation. "
+        "reasoning or say you are an AI. When the user asks you to explain, describe, "
+        "tell a story, or tell them about a topic, give 2-6 concise, complete sentences. "
+        "Never end in the middle of a sentence. Treat follow-up speech as the same conversation. "
         "If the user pauses mid-thought, wait instead of jumping in. If interrupted, stop "
         "and listen. Briefly acknowledge an explicit goodbye or stop-listening request."
     )
@@ -170,7 +172,12 @@ def realtime_session_config() -> dict:
         "model": os.getenv("ROBOT_REALTIME_MODEL", "gpt-realtime-2.1-mini"),
         "output_modalities": ["audio"],
         "instructions": instructions,
-        "max_output_tokens": int(os.getenv("ROBOT_REALTIME_MAX_OUTPUT_TOKENS", "120")),
+        # Realtime 2.1 uses the same allowance for reasoning and spoken output.
+        # A tiny cap can cut audible speech off mid-sentence, so keep a safe floor
+        # and control normal brevity through the conversation instructions above.
+        "max_output_tokens": max(
+            800, int(os.getenv("ROBOT_REALTIME_MAX_OUTPUT_TOKENS", "800"))
+        ),
         "audio": {
             "input": {
                 "noise_reduction": {"type": "far_field"},

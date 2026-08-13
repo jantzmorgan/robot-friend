@@ -88,6 +88,8 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(turn["create_response"])
         self.assertTrue(turn["interrupt_response"])
         self.assertIn("under 20 words", config["instructions"])
+        self.assertIn("2-6 concise, complete sentences", config["instructions"])
+        self.assertGreaterEqual(config["max_output_tokens"], 800)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "", "ROBOT_REALTIME": "1"})
     def test_missing_key_is_reported_before_session_handoff(self):
