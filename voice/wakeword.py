@@ -1,4 +1,5 @@
 import io
+from collections import deque
 import threading
 import time
 import wave
@@ -338,6 +339,9 @@ class WakeWordListener:
             frames_per_buffer=CHUNK,
         )
         frames = []
+        # Keep a small rolling buffer so the consonant that crosses the voice
+        # threshold is not the first sound written to the transcript WAV.
+        pre_roll = deque(maxlen=max(1, int(0.4 * RATE / CHUNK)))
         speech_started = False
         silent_chunks = 0
         silence_chunks_to_stop = max(1, int(silence_seconds * RATE / CHUNK))
@@ -353,6 +357,8 @@ class WakeWordListener:
                 )))
 
                 if level >= speech_threshold:
+                    if not speech_started:
+                        frames.extend(pre_roll)
                     speech_started = True
                     silent_chunks = 0
                 elif speech_started:
@@ -362,6 +368,8 @@ class WakeWordListener:
                     frames.append(raw_audio)
                     if silent_chunks >= silence_chunks_to_stop:
                         break
+                else:
+                    pre_roll.append(raw_audio)
         finally:
             try:
                 command_stream.stop_stream()

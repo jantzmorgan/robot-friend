@@ -2019,6 +2019,14 @@ let lastWakeCounter =
     0;
 
 
+let wakeCounterInitialized =
+    false;
+
+
+let backendConversationActive =
+    false;
+
+
 let conversationMode =
     false;
 
@@ -2300,7 +2308,9 @@ if (
 
 
     setExpression(
-        "normal"
+        data.expression === "neutral"
+            ? "normal"
+            : (data.expression || "normal")
     );
 }
 
@@ -2312,7 +2322,75 @@ if (
 
     face.speaking =
         false;
-}    
+}
+
+
+if (!data.speaking) {
+
+    if (data.mode === "thinking") {
+
+        backendConversationActive =
+            true;
+
+
+        setExpression(
+            "thinking"
+        );
+
+    } else if (
+        data.mode === "listening" &&
+        data.wake_detected
+    ) {
+
+        backendConversationActive =
+            true;
+
+
+        setExpression(
+            "curious"
+        );
+
+    } else if (
+        backendConversationActive &&
+        data.mode === "idle" &&
+        !data.wake_detected
+    ) {
+
+        backendConversationActive =
+            false;
+
+
+        setExpression(
+            data.expression === "neutral"
+                ? "normal"
+                : (data.expression || "normal")
+        );
+    } else if (
+        data.mode === "idle" &&
+        !data.wake_detected
+    ) {
+
+        setExpression(
+            data.expression === "neutral"
+                ? "normal"
+                : (data.expression || "normal")
+        );
+    }
+}
+
+
+        if (!wakeCounterInitialized) {
+
+            lastWakeCounter =
+                data.wake_counter;
+
+
+            wakeCounterInitialized =
+                true;
+
+
+            return;
+        }
 
 
         if (
@@ -2385,20 +2463,8 @@ async function handleWakeWord() {
         Date.now();
 
 
-    conversationMode =
+    backendConversationActive =
         true;
-
-
-    listenRetryCount =
-        0;
-
-
-    listenWindowEndsAt =
-        Date.now() +
-        WAKE_COMMAND_WINDOW_MS;
-
-
-    resetConversationTimeout();
 
 
     setExpression(

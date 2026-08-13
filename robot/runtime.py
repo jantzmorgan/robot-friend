@@ -24,8 +24,11 @@ class RobotRuntime:
         self.audio_input, self.audio_output = audio_input, audio_output
         self.obstacle_stop_cm = obstacle_stop_cm
         self.state = StateStore()
-        self._audio_reports_playback = hasattr(audio_output, "set_playback_callbacks")
-        if self._audio_reports_playback:
+        self._audio_reports_playback = bool(
+            getattr(audio_output, "reports_playback", False)
+            or hasattr(audio_output, "set_playback_callbacks")
+        )
+        if hasattr(audio_output, "set_playback_callbacks"):
             audio_output.set_playback_callbacks(
                 lambda: self.state.update(speaking=True, mode="speaking"),
                 lambda: self.state.update(speaking=False, mode="idle"),

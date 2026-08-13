@@ -88,6 +88,10 @@ def robot_context(user_message: str) -> str:
         "face_theme, face_colors, and face_effect above are real. Acknowledge color "
         "changes naturally as something you physically did; never claim a change "
         "that is not reflected in that state.\n\n"
+        "SPOKEN TURN RULES:\n"
+        "Default to one natural sentence of 5-20 words. Answer directly and stop. "
+        "Do not use headings, lists, recaps, caveats, or offer extra help in ordinary "
+        "conversation. Only become detailed when the user explicitly asks for detail.\n\n"
         f"{memory}"
     )
 
@@ -118,9 +122,13 @@ def generate_reply(user_message: str) -> str:
     with conversation_lock:
         recent = [*conversation[-10:], {"role": "user", "content": user_message}]
     response = get_openai_client().responses.create(
-        model=os.getenv("ROBOT_MODEL", "gpt-5.6-luna"),
+        model=os.getenv("ROBOT_MODEL", "gpt-5.4-mini"),
         instructions=robot_context(user_message), input=recent,
-        reasoning={"effort": "low"}, max_output_tokens=180,
+        # Spoken conversation is latency-sensitive and normally needs no
+        # hidden deliberation. This remains configurable for harder uses.
+        reasoning={"effort": os.getenv("ROBOT_REASONING_EFFORT", "none")},
+        max_output_tokens=80,
+        text={"verbosity": "low"},
     )
     reply = response.output_text.strip()
     if not reply:
@@ -143,12 +151,45 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
     )
     action = bool(re.search(r"\b(make|change|turn|set|switch|go|be|light)\b", lowered)) and has_color
     effect = None
-    if any(phrase in lowered for phrase in ("on fire", "catch fire", "flame", "flames", "fiery")):
-        effect = "fire"
-    elif any(phrase in lowered for phrase in ("cry", "tears", "tearful")):
-        effect = "tears"
-    elif any(phrase in lowered for phrase in ("stop effect", "no effect", "normal effect", "effects off")):
+    expression = None
+    stop_effect = bool(re.search(
+        r"\b(stop|end|clear|remove|quit|disable|turn off|no more)\b.{0,24}"
+        r"\b(fire|flames|burning|cry|crying|tears|effect|effects)\b",
+        lowered,
+    )) or any(phrase in lowered for phrase in (
+        "effects off", "effect off", "no effect", "normal effect",
+    ))
+    start_fire = any(phrase in lowered for phrase in (
+        "on fire", "catch fire", "start fire", "start the fire", "show flames",
+        "turn fire on", "fire on", "fiery",
+    ))
+    start_tears = bool(re.search(r"\b(cry|crying|weep|tears|tearful)\b", lowered))
+    expression_action = bool(re.search(
+        r"\b(make|change|turn|set|switch|go|get|be|look|show)\b", lowered
+    ))
+
+    if stop_effect:
         effect = "none"
+        expression = "normal"
+    elif start_fire:
+        effect = "fire"
+        expression = "annoyed"
+    elif start_tears:
+        effect = "tears"
+        expression = "sad"
+    elif expression_action and re.search(r"\b(mad|angry|annoyed)\b", lowered):
+        # Auto shows fire for an annoyed face and, importantly, replaces tears.
+        effect = "auto"
+        expression = "annoyed"
+    elif expression_action and re.search(r"\b(sad|upset)\b", lowered):
+        effect = "auto"
+        expression = "sad"
+    elif expression_action and re.search(r"\b(happy|excited|surprised|curious|normal)\b", lowered):
+        effect = "auto"
+        for name in ("happy", "excited", "surprised", "curious", "normal"):
+            if name in lowered:
+                expression = name
+                break
 
     if not action and effect is None:
         return None
@@ -182,6 +223,8 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
                        face_colors=found)
     if effect is not None:
         changes["face_effect"] = effect
+    if expression is not None:
+        changes["expression"] = expression
     runtime.state.update(**changes)
     return found
 
@@ -205,7 +248,7 @@ def process_wake_command() -> None:
             return
 
         wake_listener.pause(wait=True)
-        silence_seconds = float(os.getenv("ROBOT_COMMAND_SILENCE_SECONDS", "1.8"))
+        silence_seconds = float(os.getenv("ROBOT_COMMAND_SILENCE_SECONDS", "1.1"))
         followup_wait = float(os.getenv("ROBOT_CONVERSATION_WAIT_SECONDS", "12"))
         max_turns = max(1, int(os.getenv("ROBOT_CONVERSATION_MAX_TURNS", "20")))
         exit_phrases = {
@@ -284,7 +327,7 @@ def start_wake_word() -> None:
         from voice.wakeword import WakeWordListener
         wake_listener = WakeWordListener(handle_wake_word)
         wake_listener.start()
-        runtime.state.update(wake_word_online=True, wake_paused=False)
+        runtime.state.update(wake_word_online=True, wake_paused=False, listening=True)
     except Exception as error:
         wake_listener = None
         runtime.state.update(wake_word_online=False, last_error=f"Wake word unavailable: {error}")

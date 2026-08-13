@@ -48,6 +48,29 @@ class ApiTests(unittest.TestCase):
         apply_spoken_face_colors("Stop effects")
         self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
 
+    def test_tears_can_start_and_stop(self):
+        apply_spoken_face_colors("Cry for me")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "tears")
+
+        apply_spoken_face_colors("Stop crying")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "none")
+        self.assertEqual(state["expression"], "normal")
+
+    def test_fire_can_start_and_stop(self):
+        apply_spoken_face_colors("Start the fire")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "fire")
+
+        apply_spoken_face_colors("Turn off the fire")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
+
+    def test_mad_face_replaces_tears_with_automatic_fire(self):
+        apply_spoken_face_colors("Cry")
+        apply_spoken_face_colors("Switch to a mad face")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["expression"], "annoyed")
+        self.assertEqual(state["face_effect"], "auto")
+
 
 if __name__ == "__main__":
     unittest.main()
