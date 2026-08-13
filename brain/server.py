@@ -616,6 +616,43 @@ def create_realtime_session():
     return Response(upstream.text, status=200, content_type="application/sdp")
 
 
+@app.post("/realtime/token")
+def create_realtime_token():
+    """Mint the short-lived browser credential used by official WebRTC flow."""
+    ready, reason = realtime_readiness()
+    if not ready:
+        runtime.state.update(last_error=reason)
+        return jsonify(error=reason), 503
+    if wake_listener is not None:
+        wake_listener.pause(wait=True)
+    runtime.state.update(
+        listening=True, speaking=False, wake_detected=True,
+        wake_paused=True, mode="listening",
+    )
+    arm_realtime_guard(10.0)
+    safety_id = hashlib.sha256(CURRENT_MEMORY_SUBJECT.encode("utf-8")).hexdigest()
+    upstream = httpx.post(
+        "https://api.openai.com/v1/realtime/client_secrets",
+        headers={
+            "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+            "Content-Type": "application/json",
+            "OpenAI-Safety-Identifier": safety_id,
+        },
+        json={"session": realtime_session_config()},
+        timeout=30.0,
+    )
+    if upstream.is_error:
+        try:
+            detail = upstream.json().get("error", {}).get("message", "")
+        except (ValueError, AttributeError):
+            detail = ""
+        detail = detail or f"OpenAI token service returned HTTP {upstream.status_code}"
+        runtime.state.update(last_error=f"Realtime token failed: {detail}")
+        return jsonify(error=detail), upstream.status_code
+    runtime.state.update(last_error=None)
+    return jsonify(upstream.json())
+
+
 @app.post("/realtime/event")
 def realtime_event():
     state = str((request.get_json(silent=True) or {}).get("state", "")).lower()

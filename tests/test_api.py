@@ -128,6 +128,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(runtime.state.snapshot()["wake_detected"])
 
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "ROBOT_REALTIME": "1"})
+    @patch("brain.server.httpx.post")
+    def test_realtime_token_uses_ephemeral_client_secret_flow(self, post):
+        upstream = Mock(status_code=200, is_error=False)
+        upstream.json.return_value = {"value": "ek_test"}
+        post.return_value = upstream
+        response = self.client.post("/realtime/token")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["value"], "ek_test")
+        self.assertIn("/v1/realtime/client_secrets", post.call_args.args[0])
+        self.assertIn("session", post.call_args.kwargs["json"])
+
     def test_realtime_watchdog_recovers_abandoned_browser_session(self):
         runtime.state.update(
             listening=False, wake_detected=True, wake_paused=True, mode="thinking"
