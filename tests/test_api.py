@@ -22,6 +22,8 @@ class ApiTests(unittest.TestCase):
         health = self.client.get("/health")
         self.assertEqual(health.status_code, 200)
         self.assertIn("realtime_ready", health.get_json()["services"])
+        face_response = self.client.get("/")
+        self.assertIn("no-store", face_response.headers["Cache-Control"])
         response = self.client.post("/motion", json={"linear": 0.2, "angular": 0})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["moving"])

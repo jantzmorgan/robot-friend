@@ -37,6 +37,16 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 app = Flask(__name__)
 CORS(app)
 
+
+@app.after_request
+def prevent_stale_robot_control(response):
+    """The face is a live controller; cached JavaScript can run obsolete logic."""
+    if request.path in {"/", "/health", "/state", "/vision"}:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 PERSONALITY_PATH = ROOT_DIR / "personality" / "robot_personality.md"
 MEMORY_PATH = Path(os.getenv("ROBOT_MEMORY_PATH", ROOT_DIR / "memory" / "robot_memory.db"))
 PERSONALITY = PERSONALITY_PATH.read_text(encoding="utf-8").strip()
