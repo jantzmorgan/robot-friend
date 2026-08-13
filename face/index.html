@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Robot Friend Face</title>
+<title>Herman — Robot Friend</title>
 
 <style>
     * {
@@ -2177,6 +2177,7 @@ let realtimeUserTranscript = "";
 let realtimeAssistantTranscript = "";
 let realtimeExitRequested = false;
 let realtimeAudioLastLoud = 0;
+let realtimeToolCallActive = false;
 const robotClientId = window.crypto?.randomUUID?.() ||
     `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const robotFaceChannel = "BroadcastChannel" in window
@@ -2480,7 +2481,28 @@ async function handleRealtimeEvent(event) {
         case "response.output_audio_transcript.done":
             realtimeAssistantTranscript = event.transcript || realtimeAssistantTranscript;
             break;
+        case "response.function_call_arguments.done": {
+            if (event.name !== "control_spotify" || !realtimeChannel) break;
+            realtimeToolCallActive = true;
+            let output;
+            try {
+                const args = JSON.parse(event.arguments || "{}");
+                output = await postRobotEndpoint("/spotify/command", {command: args.command || ""});
+            } catch (error) {
+                output = {ok: false, error: error.message || "Spotify command failed."};
+            }
+            realtimeChannel.send(JSON.stringify({
+                type: "conversation.item.create",
+                item: {type: "function_call_output", call_id: event.call_id, output: JSON.stringify(output)}
+            }));
+            realtimeChannel.send(JSON.stringify({type: "response.create"}));
+            break;
+        }
         case "response.done":
+            if (realtimeToolCallActive) {
+                realtimeToolCallActive = false;
+                break;
+            }
             await saveRealtimeTurn();
             if (realtimeExitRequested) {
                 await endRealtimeConversation();
@@ -3335,7 +3357,7 @@ function testBrain() {
 
     const message =
         prompt(
-            "Say something to Robot Friend:"
+            "Say something to Herman:"
         );
 
 

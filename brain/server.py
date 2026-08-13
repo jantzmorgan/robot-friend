@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 import httpx
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
@@ -26,6 +26,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
 from memory.memory_manager import RobotMemory
+from integrations.spotify import SpotifyController, SpotifyError
 from robot.factory import create_runtime
 from robot.orchestrator import Orchestrator
 from robot.runtime import SafetyError
@@ -62,6 +63,13 @@ realtime_guard_lock = threading.Lock()
 realtime_guard_generation = 0
 realtime_owner_lock = threading.Lock()
 realtime_owner: str | None = None
+spotify = SpotifyController(
+    os.getenv("SPOTIFY_CLIENT_ID", "90bf0acc32b54ff0b12caa3aae758fc9"),
+    os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/spotify/callback"),
+    ROOT_DIR / "memory" / "spotify_tokens.json",
+)
+spotify_voice_lock = threading.Lock()
+spotify_resume_after_voice = False
 
 
 def realtime_enabled() -> bool:
@@ -191,7 +199,9 @@ def realtime_session_config() -> dict:
         "tell a story, or tell them about a topic, give 2-6 concise, complete sentences. "
         "Never end in the middle of a sentence. Treat follow-up speech as the same conversation. "
         "If the user pauses mid-thought, wait instead of jumping in. If interrupted, stop "
-        "and listen. Briefly acknowledge an explicit goodbye or stop-listening request."
+        "and listen. Briefly acknowledge an explicit goodbye or stop-listening request. "
+        "Your name is Herman. For every request to play, pause, resume, skip, identify, "
+        "or change the volume of Spotify, call control_spotify and use its real result."
     )
     return {
         "type": "realtime",
@@ -204,6 +214,18 @@ def realtime_session_config() -> dict:
         "max_output_tokens": max(
             800, int(os.getenv("ROBOT_REALTIME_MAX_OUTPUT_TOKENS", "800"))
         ),
+        "tools": [{
+            "type": "function",
+            "name": "control_spotify",
+            "description": "Control connected Spotify playback or identify the current song.",
+            "parameters": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+        }],
+        "tool_choice": "auto",
         "audio": {
             "input": {
                 "noise_reduction": {"type": "far_field"},
@@ -221,6 +243,25 @@ def realtime_session_config() -> dict:
             },
         },
     }
+
+
+def pause_spotify_for_voice() -> None:
+    global spotify_resume_after_voice
+    if spotify.pause_if_playing():
+        with spotify_voice_lock:
+            spotify_resume_after_voice = True
+
+
+def finish_spotify_voice_interruption() -> None:
+    global spotify_resume_after_voice
+    with spotify_voice_lock:
+        should_resume = spotify_resume_after_voice
+        spotify_resume_after_voice = False
+    if should_resume:
+        try:
+            spotify.resume()
+        except SpotifyError:
+            app.logger.exception("Could not resume Spotify after voice conversation")
 
 
 def curate_memory(user_message: str, reply: str) -> None:
@@ -443,6 +484,8 @@ def process_wake_command() -> None:
 
 def handle_wake_word() -> None:
     """Notify the face, release the mic, and process the command in Python."""
+    if spotify.connected:
+        threading.Thread(target=pause_spotify_for_voice, daemon=True).start()
     ready, reason = realtime_readiness()
     if realtime_enabled() and not ready:
         runtime.state.update(
@@ -495,6 +538,11 @@ def safety_error(error):
 @app.errorhandler(ValueError)
 def value_error(error):
     return jsonify(error=str(error)), 400
+
+
+@app.errorhandler(SpotifyError)
+def spotify_error(error):
+    return jsonify(error=str(error)), 409
 
 
 @app.errorhandler(Exception)
@@ -729,7 +777,7 @@ def realtime_heartbeat():
     with realtime_owner_lock:
         owner = realtime_owner
     if owner and client_id != owner:
-        return jsonify(error="This face was replaced by a newer Jarvis face"), 409
+        return jsonify(error="This face was replaced by a newer Herman face"), 409
     if runtime.state.snapshot()["wake_paused"]:
         arm_realtime_guard(10.0)
     return jsonify(status="alive")
@@ -776,7 +824,58 @@ def end_realtime_session():
         listening=True, speaking=False, wake_detected=False,
         wake_paused=False, mode="idle",
     )
+    if spotify.connected:
+        threading.Thread(target=finish_spotify_voice_interruption, daemon=True).start()
     return jsonify(status="realtime conversation ended")
+
+
+@app.get("/spotify/status")
+def spotify_status():
+    result = {"configured": spotify.configured, "connected": spotify.connected}
+    if spotify.connected:
+        try:
+            result.update(spotify.playback())
+        except SpotifyError as error:
+            result["error"] = str(error)
+    return jsonify(result)
+
+
+@app.get("/spotify/connect")
+def spotify_connect():
+    return redirect(spotify.authorization_url())
+
+
+@app.get("/spotify/callback")
+def spotify_callback():
+    error = request.args.get("error")
+    if error:
+        raise SpotifyError(f"Spotify authorization was declined: {error}")
+    spotify.complete_authorization(
+        str(request.args.get("code", "")), str(request.args.get("state", ""))
+    )
+    return redirect("/?spotify=connected")
+
+
+@app.post("/spotify/command")
+def spotify_command():
+    global spotify_resume_after_voice
+    command = str((request.get_json(silent=True) or {}).get("command", "")).strip()
+    if not command:
+        raise ValueError("No Spotify command supplied")
+    try:
+        result = spotify.command(command)
+    except SpotifyError as error:
+        return jsonify(ok=False, error=str(error)), 409
+    if result.get("action") in {"play", "pause", "resume"}:
+        with spotify_voice_lock:
+            spotify_resume_after_voice = False
+    return jsonify(ok=True, **result)
+
+
+@app.post("/spotify/disconnect")
+def spotify_disconnect():
+    spotify.disconnect()
+    return jsonify(disconnected=True)
 
 
 @app.post("/chat")

@@ -127,6 +127,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn("under 20 words", config["instructions"])
         self.assertIn("2-6 concise, complete sentences", config["instructions"])
         self.assertGreaterEqual(config["max_output_tokens"], 800)
+        self.assertEqual(config["tools"][0]["name"], "control_spotify")
+        self.assertIn("Your name is Herman", config["instructions"])
 
     def test_robot_knows_spoken_face_commands_are_real(self):
         context = robot_context("Make your face blue")
