@@ -152,7 +152,9 @@ def robot_context(user_message: str) -> str:
         "for example: 'Blue it is.' Never say you cannot change your face color, never "
         "describe it as merely simulated, and never tell the user to change it manually. "
         "For questions about the appearance before this current request, use the state "
-        "snapshot as the source of truth.\n\n"
+        "snapshot as the source of truth. You also have real dance, party, and disco "
+        "modes that animate your eyes and LED colors. Asking you to cry or start crying "
+        "activates your blue tears. Acknowledge these modes as things you physically do.\n\n"
         "SPOKEN TURN RULES:\n"
         "Default to one natural sentence of 5-20 words. Answer directly and stop. "
         "Do not use headings, lists, recaps, caveats, or offer extra help in ordinary "
@@ -262,7 +264,7 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
     expression = None
     stop_effect = bool(re.search(
         r"\b(stop|end|clear|remove|quit|disable|turn off|no more)\b.{0,24}"
-        r"\b(fire|flames|burning|cry|crying|tears|effect|effects)\b",
+        r"\b(fire|flames|burning|cry|crying|tears|dance|dancing|party|disco|effect|effects)\b",
         lowered,
     )) or any(phrase in lowered for phrase in (
         "effects off", "effect off", "no effect", "normal effect",
@@ -271,7 +273,10 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
         "on fire", "catch fire", "start fire", "start the fire", "show flames",
         "turn fire on", "fire on", "fiery",
     ))
-    start_tears = bool(re.search(r"\b(cry|crying|weep|tears|tearful)\b", lowered))
+    start_tears = bool(re.search(
+        r"\b(cry|cries|crying|weep|weeping|tear|tears|tearful|sob|sobbing)\b", lowered
+    ))
+    start_dance = bool(re.search(r"\b(dance|dancing|disco|party)\b", lowered))
     expression_action = bool(re.search(
         r"\b(make|change|turn|set|switch|go|get|be|look|show)\b", lowered
     ))
@@ -282,6 +287,9 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
     elif start_fire:
         effect = "fire"
         expression = "annoyed"
+    elif start_dance:
+        effect = "dance"
+        expression = "excited"
     elif start_tears:
         effect = "tears"
         expression = "sad"

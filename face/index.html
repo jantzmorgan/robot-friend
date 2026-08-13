@@ -1295,6 +1295,24 @@ function drawPixelEffects(now) {
     const automatic = faceEffect === "auto";
     const showFire = faceEffect === "fire" || (automatic && face.expression === "annoyed");
     const showTears = faceEffect === "tears" || (automatic && face.expression === "sad");
+    const showDance = faceEffect === "dance";
+
+    if (showDance) {
+        const danceColors = ["#FF3B30", "#FFE14A", "#4CFF88", "#42E8FF", "#A970FF", "#FF4FC8"];
+        const radiusX = Math.min(window.innerWidth * 0.43, 310);
+        const radiusY = Math.min(window.innerHeight * 0.40, 190);
+        for (let index = 0; index < 18; index++) {
+            const angle = now * 0.0035 + index * Math.PI * 2 / 18;
+            const pulse = 0.72 + 0.28 * Math.sin(now * 0.012 + index);
+            drawEffectPixel(
+                centerX + Math.cos(angle) * radiusX,
+                centerY + 70 + Math.sin(angle) * radiusY,
+                8 + pulse * 8,
+                8 + pulse * 8,
+                danceColors[(index + Math.floor(now / 180)) % danceColors.length]
+            );
+        }
+    }
 
     if (showFire) {
         const positions = [-245, -185, -120, -55, 20, 90, 165, 235];
@@ -1320,6 +1338,12 @@ function drawPixelEffects(now) {
 }
 
 function animate(now) {
+
+    if (faceEffect === "dance" && !face.speaking) {
+        face.targetGazeX = Math.sin(now * 0.009);
+        face.targetGazeY = Math.sin(now * 0.014) * 0.75;
+        face.mouthTalkAmount = 0.35 + 0.3 * (Math.sin(now * 0.018) + 1) / 2;
+    }
 
     face.gazeX =
         lerp(
@@ -1367,7 +1391,7 @@ function animate(now) {
                 1
             );
 
-    } else {
+    } else if (faceEffect !== "dance") {
 
         face.mouthTalkAmount =
             lerp(

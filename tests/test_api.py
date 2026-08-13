@@ -66,6 +66,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(state["face_effect"], "none")
         self.assertEqual(state["expression"], "normal")
 
+    def test_start_crying_naturally_means_blue_tears(self):
+        apply_spoken_face_colors("Jarvis, start crying")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "tears")
+        self.assertEqual(state["expression"], "sad")
+
+    def test_dance_mode_can_start_and_stop(self):
+        apply_spoken_face_colors("Go into dance mode")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "dance")
+        self.assertEqual(state["expression"], "excited")
+
+        apply_spoken_face_colors("Stop dancing")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "none")
+        self.assertEqual(state["expression"], "normal")
+
     def test_fire_can_start_and_stop(self):
         apply_spoken_face_colors("Start the fire")
         self.assertEqual(runtime.state.snapshot()["face_effect"], "fire")
@@ -96,6 +113,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn("local appearance controller", context.lower())
         self.assertIn("treat the change as successfully performed", context)
         self.assertIn("Never say you cannot change your face color", context)
+        self.assertIn("real dance, party, and disco", context)
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "", "ROBOT_REALTIME": "1"})
     def test_missing_key_is_reported_before_session_handoff(self):
