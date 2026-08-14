@@ -89,16 +89,21 @@ def is_exit_phrase(message: str) -> bool:
     }
     if normalized in exact:
         return True
-    return bool(re.fullmatch(
-        r"(?:okay |alright )?(?:"
+    strong_exit = re.search(
+        r"(?:^|\b)(?:okay |alright )?(?:"
+        r"(?:that's|that is) enough|"
         r"(?:i'm|im|i am) (?:done(?: talking(?: to you)?)?|leaving|going now)|"
         r"(?:i've|ive|i have) had enough|"
         r"(?:you can |please )?(?:stop|quit) (?:talking|listening)|"
-        r"(?:end|finish) (?:the )?(?:conversation|chat)|"
-        r"(?:bye|goodbye|good night|see you|see you later)"
-        r")[.! ]*",
+        r"(?:end|finish) (?:the )?(?:conversation|chat)"
+        r")(?:$|\b)",
         normalized,
-    ))
+    )
+    farewell = re.fullmatch(
+        r"(?:okay |alright )?(?:bye|goodbye|good night|see you|see you later)",
+        normalized,
+    )
+    return bool(strong_exit or farewell)
 
 
 def realtime_readiness() -> tuple[bool, str | None]:
@@ -227,7 +232,10 @@ def realtime_session_config() -> dict:
         "tell a story, or tell them about a topic, give 2-6 concise, complete sentences. "
         "Never end in the middle of a sentence. Treat follow-up speech as the same conversation. "
         "If the user pauses mid-thought, wait instead of jumping in. If interrupted, stop "
-        "and listen. Briefly acknowledge an explicit goodbye or stop-listening request. "
+        "and listen. When the user indicates they are finished talking, leaving, saying "
+        "goodbye or good night, or asks you to stop talking/listening, briefly acknowledge "
+        "them and ALWAYS call end_conversation. Infer this from meaning rather than requiring "
+        "an exact phrase. "
         "Your name is Herman. Call control_spotify ONLY when the user is clearly requesting "
         "music or Spotify audio: a song, artist, album, playlist, Liked Songs, music queue, "
         "currently playing track, or music playback/volume. Never call it for face colors, "
@@ -261,6 +269,18 @@ def realtime_session_config() -> dict:
                 "type": "object",
                 "properties": {"command": {"type": "string"}},
                 "required": ["command"],
+                "additionalProperties": False,
+            },
+        }, {
+            "type": "function",
+            "name": "end_conversation",
+            "description": (
+                "End Herman's active listening session when the user says goodbye, leaves, "
+                "is done talking, has had enough, or asks Herman to stop talking or listening."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
                 "additionalProperties": False,
             },
         }],

@@ -22,6 +22,7 @@ class ApiTests(unittest.TestCase):
         phrases = [
             "That's enough", "I'm done talking to you", "I'm leaving now",
             "You can stop talking", "I've had enough", "See you later",
+            "Okay, that's enough, I'm done talking now",
         ]
         for phrase in phrases:
             with self.subTest(phrase=phrase):
@@ -150,6 +151,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn("2-6 concise, complete sentences", config["instructions"])
         self.assertGreaterEqual(config["max_output_tokens"], 800)
         self.assertEqual(config["tools"][0]["name"], "control_spotify")
+        self.assertEqual(config["tools"][1]["name"], "end_conversation")
+        self.assertIn("ALWAYS call end_conversation", config["instructions"])
         self.assertIn("Your name is Herman", config["instructions"])
         self.assertIn("Call control_spotify ONLY", config["instructions"])
         self.assertIn("Never use for Herman's face", config["tools"][0]["description"])

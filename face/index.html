@@ -2198,7 +2198,9 @@ const REALTIME_EXIT_PHRASES = new Set([
 function isRealtimeExitPhrase(text) {
     const normalized = normalizedRealtimeText(text);
     if (REALTIME_EXIT_PHRASES.has(normalized)) return true;
-    return /^(?:okay |alright )?(?:(?:i'm|im|i am) (?:done(?: talking(?: to you)?)?|leaving|going now)|(?:i've|ive|i have) had enough|(?:you can |please )?(?:stop|quit) (?:talking|listening)|(?:end|finish) (?:the )?(?:conversation|chat)|(?:bye|goodbye|good night|see you|see you later))$/.test(normalized);
+    const strongExit = /(?:^|\b)(?:okay |alright )?(?:(?:that's|that is) enough|(?:i'm|im|i am) (?:done(?: talking(?: to you)?)?|leaving|going now)|(?:i've|ive|i have) had enough|(?:you can |please )?(?:stop|quit) (?:talking|listening)|(?:end|finish) (?:the )?(?:conversation|chat))(?:$|\b)/.test(normalized);
+    const farewell = /^(?:okay |alright )?(?:bye|goodbye|good night|see you|see you later)$/.test(normalized);
+    return strongExit || farewell;
 }
 
 if (robotFaceChannel) {
@@ -2491,10 +2493,13 @@ async function handleRealtimeEvent(event) {
             realtimeAssistantTranscript = event.transcript || realtimeAssistantTranscript;
             break;
         case "response.function_call_arguments.done": {
-            if (event.name !== "control_spotify" || !realtimeChannel) break;
+            if (!realtimeChannel || !["control_spotify", "end_conversation"].includes(event.name)) break;
             realtimeToolCallActive = true;
             let output;
-            try {
+            if (event.name === "end_conversation") {
+                realtimeExitRequested = true;
+                output = {ok: true, message: "Conversation ending."};
+            } else try {
                 const args = JSON.parse(event.arguments || "{}");
                 output = await postRobotEndpoint("/spotify/command", {command: args.command || ""});
                 realtimeEndAfterToolResponse = ["play", "resume"].includes(output?.action);
