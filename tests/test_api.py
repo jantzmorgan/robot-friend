@@ -174,6 +174,14 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Randy Marsh", context)
         self.assertIn("invisible blog", context.lower())
 
+    def test_robot_context_includes_honest_embodiment_plan(self):
+        context = robot_context("Will you be able to roll around and remind me?")
+        self.assertIn("Jetson Orin Nano 8GB", context)
+        self.assertIn("Waveshare UGV Rover", context)
+        self.assertIn("Scheduled reminders are also an approved capability", context)
+        self.assertIn("not yet implemented", context)
+        self.assertIn("Never describe a planned capability as impossible", context)
+
     def test_cosmetic_request_is_never_sent_to_spotify(self):
         response = self.client.post(
             "/spotify/command", json={"command": "start Super Saiyan mode"}

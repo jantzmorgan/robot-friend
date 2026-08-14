@@ -52,10 +52,12 @@ def prevent_stale_robot_control(response):
 
 PERSONALITY_PATH = ROOT_DIR / "personality" / "robot_personality.md"
 CHARACTER_CANON_PATH = ROOT_DIR / "personality" / "herman_canon.md"
+EMBODIMENT_PLAN_PATH = ROOT_DIR / "personality" / "embodiment_plan.md"
 LOCAL_DATA_DIR = Path(os.getenv("LOCALAPPDATA", ROOT_DIR / "memory")) / "RobotFriend"
 MEMORY_PATH = Path(os.getenv("ROBOT_MEMORY_PATH", LOCAL_DATA_DIR / "robot_memory.db"))
 PERSONALITY = PERSONALITY_PATH.read_text(encoding="utf-8").strip()
 CHARACTER_CANON = CHARACTER_CANON_PATH.read_text(encoding="utf-8").strip()
+EMBODIMENT_PLAN = EMBODIMENT_PLAN_PATH.read_text(encoding="utf-8").strip()
 memory_manager = RobotMemory(MEMORY_PATH)
 inner_life = HermanInnerLife(
     Path(os.getenv("HERMAN_INNER_LIFE_PATH", LOCAL_DATA_DIR / "herman_inner_life.json"))
@@ -205,7 +207,8 @@ def robot_context(user_message: str) -> str:
     memory = memory_manager.get_context(user_message, CURRENT_MEMORY_SUBJECT, limit=6)
     life_context = inner_life.context()
     return (
-        f"{PERSONALITY}\n\n{CHARACTER_CANON}\n\n{life_context}\n\n"
+        f"{PERSONALITY}\n\n{CHARACTER_CANON}\n\n{EMBODIMENT_PLAN}\n\n"
+        f"{life_context}\n\n"
         "CURRENT ROBOT STATE (real telemetry; do not invent more):\n"
         f"{json.dumps(state, indent=2)}\n\n"
         "FACE CAPABILITIES:\n"
