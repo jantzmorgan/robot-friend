@@ -143,12 +143,12 @@ const FACE_STYLE =
     new URLSearchParams(window.location.search).get("face") || "pixel";
 
 let faceTheme =
-    new URLSearchParams(window.location.search).get("theme") || "herman";
+    new URLSearchParams(window.location.search).get("theme") || "rainbow";
 
 let faceColors =
     faceTheme === "blue"
         ? ["#55CFFF"]
-        : faceTheme === "multicolor"
+        : faceTheme === "multicolor" || faceTheme === "rainbow"
             ? ["#42E8FF", "#7B8CFF", "#FF4FC8"]
             : ["#FF5A2D"];
 
@@ -1312,6 +1312,23 @@ function drawEffectPixel(x, y, width, height, color) {
     ctx.restore();
 }
 
+function drawCalmFaceBorder(now, centerX, centerY) {
+    // A steady geometric frame makes Herman's features feel like one complete
+    // face. Its shape stays still; only its single solid rainbow color cycles.
+    const color = `hsl(${(now / 35) % 360} 100% 66%)`;
+    const radiusX = Math.min(window.innerWidth * 0.455, 335);
+    const radiusY = Math.min(window.innerHeight * 0.455, 215);
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(centerX, centerY + 52, radiusX, radiusY, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 9;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 15;
+    ctx.stroke();
+    ctx.restore();
+}
+
 function drawPixelEffects(now) {
     if (!PIXEL_MODE) return;
 
@@ -1329,7 +1346,9 @@ function drawPixelEffects(now) {
         super_saiyan: ["#FFE14A", "#FFD34E", "#F4FAFF"], sleep: ["#6657E8", "#65D9FF"],
     };
 
-    if (showDance) {
+    if (!showDance) {
+        drawCalmFaceBorder(now, centerX, centerY);
+    } else {
         const danceColors = ["#FF3B30", "#FFE14A", "#4CFF88", "#42E8FF", "#A970FF", "#FF4FC8"];
         const radiusX = Math.min(window.innerWidth * 0.43, 310);
         const radiusY = Math.min(window.innerHeight * 0.40, 190);

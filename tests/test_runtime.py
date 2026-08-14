@@ -3,6 +3,7 @@ import unittest
 from robot.factory import create_runtime
 from robot.interfaces import AudioOutputDriver, SensorSnapshot
 from robot.runtime import RobotRuntime, SafetyError
+from robot.state import RobotState
 
 
 class SelfReportingAudio(AudioOutputDriver):
@@ -16,6 +17,11 @@ class SelfReportingAudio(AudioOutputDriver):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_default_face_is_calm_rainbow(self):
+        state = RobotState()
+        self.assertEqual(state.face_theme, "rainbow")
+        self.assertEqual(state.face_colors, ["#42E8FF", "#7B8CFF", "#FF4FC8"])
+
     def setUp(self):
         self.robot = create_runtime("sim")
 
