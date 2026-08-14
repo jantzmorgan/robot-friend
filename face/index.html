@@ -2408,6 +2408,11 @@ function normalizedRealtimeText(text) {
     return text.toLowerCase().replace(/[^a-z' ]/g, "").trim();
 }
 
+function muteRealtimeMicrophone() {
+    if (!realtimeMic) return;
+    realtimeMic.getAudioTracks().forEach(track => { track.enabled = false; });
+}
+
 function resetRealtimeIdleTimer() {
     if (realtimeIdleTimer) clearTimeout(realtimeIdleTimer);
     realtimeIdleTimer = setTimeout(() => endRealtimeConversation(), REALTIME_IDLE_MS);
@@ -2445,22 +2450,29 @@ function monitorRealtimeAudio(stream) {
         if (audible && !backendSpeaking) {
             backendSpeaking = true;
             reportRealtimeState("speaking");
+        } else if (!audible && backendSpeaking) {
+            backendSpeaking = false;
         }
         realtimeAnimationFrame = requestAnimationFrame(tick);
     };
     tick();
 }
 
-async function waitForRealtimeAudioToFinish(maxWaitMs = 5000) {
-    // response.done means generation finished, not that WebRTC has played every
-    // buffered sample. Keep the connection alive until the speaker is quiet.
+async function waitForRealtimeAudioToFinish(maxWaitMs = 8000) {
+    // response.done means generation finished, not that WebRTC has started (or
+    // finished) playing its buffered samples. First observe playback, then wait
+    // for genuine silence. Without these two phases the initial buffer delay is
+    // mistaken for the end of the goodbye.
     const started = performance.now();
-    realtimeAudioLastLoud = Math.max(realtimeAudioLastLoud, started);
+    let playbackStarted = face.speaking || started - realtimeAudioLastLoud < 350;
     await new Promise(resolve => {
         const check = () => {
             const now = performance.now();
-            const audioIsQuiet = now - realtimeAudioLastLoud >= 650;
-            if (!realtimePeer || audioIsQuiet || now - started >= maxWaitMs) {
+            if (!playbackStarted && realtimeAudioLastLoud >= started) {
+                playbackStarted = true;
+            }
+            const playbackFinished = playbackStarted && now - realtimeAudioLastLoud >= 750;
+            if (!realtimePeer || playbackFinished || now - started >= maxWaitMs) {
                 resolve();
                 return;
             }
@@ -2502,6 +2514,7 @@ async function handleRealtimeEvent(event) {
             if (realtimeUserTranscript) {
                 postRobotEndpoint("/realtime/user", {message: realtimeUserTranscript});
                 realtimeExitRequested = isRealtimeExitPhrase(realtimeUserTranscript);
+                if (realtimeExitRequested) muteRealtimeMicrophone();
             }
             break;
         }
@@ -2517,6 +2530,7 @@ async function handleRealtimeEvent(event) {
             let output;
             if (event.name === "end_conversation") {
                 realtimeExitRequested = true;
+                muteRealtimeMicrophone();
                 output = {ok: true, message: "Conversation ending."};
             } else try {
                 const args = JSON.parse(event.arguments || "{}");
@@ -2540,6 +2554,9 @@ async function handleRealtimeEvent(event) {
             await saveRealtimeTurn();
             if (realtimeExitRequested || realtimeEndAfterToolResponse) {
                 realtimeEndAfterToolResponse = false;
+                // Stop accepting input now, but leave the remote speaker and peer
+                // alive until the complete farewell/Spotify confirmation is heard.
+                muteRealtimeMicrophone();
                 await waitForRealtimeAudioToFinish();
                 await endRealtimeConversation();
             } else {
