@@ -77,6 +77,30 @@ def realtime_enabled() -> bool:
     return os.getenv("ROBOT_REALTIME", "1").lower() not in {"0", "false", "off", "no"}
 
 
+def is_exit_phrase(message: str) -> bool:
+    normalized = re.sub(r"[^a-z' ]", "", message.casefold()).strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    exact = {
+        "stop listening", "end conversation", "goodbye", "good bye", "bye",
+        "go to sleep", "that's all", "that is all", "never mind", "nevermind",
+        "that's enough", "that is enough", "i'm leaving now", "im leaving now",
+        "i'm done talking to you", "im done talking to you", "you can stop talking",
+        "i've had enough", "ive had enough",
+    }
+    if normalized in exact:
+        return True
+    return bool(re.fullmatch(
+        r"(?:okay |alright )?(?:"
+        r"(?:i'm|im|i am) (?:done(?: talking(?: to you)?)?|leaving|going now)|"
+        r"(?:i've|ive|i have) had enough|"
+        r"(?:you can |please )?(?:stop|quit) (?:talking|listening)|"
+        r"(?:end|finish) (?:the )?(?:conversation|chat)|"
+        r"(?:bye|goodbye|good night|see you|see you later)"
+        r")[.! ]*",
+        normalized,
+    ))
+
+
 def realtime_readiness() -> tuple[bool, str | None]:
     if not realtime_enabled():
         return False, "Realtime voice is disabled"
@@ -459,11 +483,6 @@ def process_wake_command() -> None:
         silence_seconds = float(os.getenv("ROBOT_COMMAND_SILENCE_SECONDS", "1.1"))
         followup_wait = float(os.getenv("ROBOT_CONVERSATION_WAIT_SECONDS", "12"))
         max_turns = max(1, int(os.getenv("ROBOT_CONVERSATION_MAX_TURNS", "20")))
-        exit_phrases = {
-            "stop listening", "end conversation", "goodbye", "go to sleep",
-            "that's all", "that is all", "never mind", "nevermind",
-        }
-
         print("Conversation mode active.")
         for turn_number in range(max_turns):
             runtime.state.update(listening=True, mode="listening")
@@ -481,8 +500,7 @@ def process_wake_command() -> None:
                 continue
 
             print(f"You: {message}")
-            normalized = re.sub(r"[^a-z' ]", "", message.lower()).strip()
-            if normalized in exit_phrases:
+            if is_exit_phrase(message):
                 runtime.state.update(listening=False)
                 runtime.speak("Okay. Say Hey Jarvis when you need me.")
                 break

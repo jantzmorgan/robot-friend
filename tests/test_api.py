@@ -9,7 +9,7 @@ os.environ["ROBOT_CAMERA"] = "sim"
 os.environ["ROBOT_MEMORY_PATH"] = os.path.join(tempfile.gettempdir(), "robot_friend_test.db")
 
 from brain.server import (
-    app, apply_spoken_face_colors, arm_realtime_guard,
+    app, apply_spoken_face_colors, arm_realtime_guard, is_exit_phrase,
     realtime_readiness, realtime_session_config, robot_context, runtime,
 )
 
@@ -17,6 +17,16 @@ from brain.server import (
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
+
+    def test_natural_goodbyes_end_a_conversation(self):
+        phrases = [
+            "That's enough", "I'm done talking to you", "I'm leaving now",
+            "You can stop talking", "I've had enough", "See you later",
+        ]
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertTrue(is_exit_phrase(phrase))
+        self.assertFalse(is_exit_phrase("Tell me about the song Goodbye Blue Sky"))
 
     def test_health_and_motion(self):
         health = self.client.get("/health")
