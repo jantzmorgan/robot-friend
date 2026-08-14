@@ -215,15 +215,20 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(runtime.state.snapshot()["wake_detected"])
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "ROBOT_REALTIME": "1"})
+    @patch("brain.server.transcribe_command", return_value="turn the face blue")
+    @patch("brain.server.wake_listener")
     @patch("brain.server.httpx.post")
-    def test_realtime_token_uses_ephemeral_client_secret_flow(self, post):
+    def test_realtime_token_uses_ephemeral_client_secret_flow(self, post, listener, transcribe):
         upstream = Mock(status_code=200, is_error=False)
         upstream.json.return_value = {"value": "ek_test"}
         post.return_value = upstream
+        listener.take_pending_command.return_value = b"post-wake-wav"
         response = self.client.post("/realtime/token", json={"client_id": "face-test"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["value"], "ek_test")
         self.assertEqual(response.get_json()["robot_client_id"], "face-test")
+        self.assertEqual(response.get_json()["initial_message"], "turn the face blue")
+        transcribe.assert_called_once_with(b"post-wake-wav")
         self.assertIn("/v1/realtime/client_secrets", post.call_args.args[0])
         self.assertIn("session", post.call_args.kwargs["json"])
 

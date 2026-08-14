@@ -788,8 +788,15 @@ def create_realtime_token():
     global realtime_owner
     with realtime_owner_lock:
         realtime_owner = client_id
+    initial_message = ""
     if wake_listener is not None:
         wake_listener.pause(wait=True)
+        handoff_audio = wake_listener.take_pending_command()
+        if handoff_audio:
+            try:
+                initial_message = transcribe_command(handoff_audio)
+            except Exception:
+                app.logger.exception("Could not transcribe immediate post-wake speech")
     runtime.state.update(
         listening=True, speaking=False, wake_detected=True,
         wake_paused=True, mode="listening",
@@ -817,6 +824,7 @@ def create_realtime_token():
     runtime.state.update(last_error=None)
     payload = upstream.json()
     payload["robot_client_id"] = client_id
+    payload["initial_message"] = initial_message
     return jsonify(payload)
 
 

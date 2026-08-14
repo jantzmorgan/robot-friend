@@ -2608,6 +2608,20 @@ async function startRealtimeConversation() {
             setExpression("curious");
             reportRealtimeState("listening");
             resetRealtimeIdleTimer();
+            const initialMessage = (tokenData.initial_message || "").trim();
+            if (initialMessage) {
+                realtimeUserTranscript = initialMessage;
+                postRobotEndpoint("/realtime/user", {message: initialMessage});
+                realtimeChannel.send(JSON.stringify({
+                    type: "conversation.item.create",
+                    item: {
+                        type: "message",
+                        role: "user",
+                        content: [{type: "input_text", text: initialMessage}]
+                    }
+                }));
+                realtimeChannel.send(JSON.stringify({type: "response.create"}));
+            }
             realtimeHeartbeatTimer = setInterval(
                 async () => {
                     try {
@@ -2933,7 +2947,6 @@ async function handleWakeWord() {
 
     /* The wake listener releases the microphone, then WebRTC owns the live
        session until an exit phrase or idle timeout returns it. */
-    await wait(200);
     await startRealtimeConversation();
 }
 
