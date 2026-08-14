@@ -49,7 +49,8 @@ def prevent_stale_robot_control(response):
     return response
 
 PERSONALITY_PATH = ROOT_DIR / "personality" / "robot_personality.md"
-MEMORY_PATH = Path(os.getenv("ROBOT_MEMORY_PATH", ROOT_DIR / "memory" / "robot_memory.db"))
+LOCAL_DATA_DIR = Path(os.getenv("LOCALAPPDATA", ROOT_DIR / "memory")) / "RobotFriend"
+MEMORY_PATH = Path(os.getenv("ROBOT_MEMORY_PATH", LOCAL_DATA_DIR / "robot_memory.db"))
 PERSONALITY = PERSONALITY_PATH.read_text(encoding="utf-8").strip()
 memory_manager = RobotMemory(MEMORY_PATH)
 runtime = create_runtime()
@@ -66,7 +67,7 @@ realtime_owner: str | None = None
 spotify = SpotifyController(
     os.getenv("SPOTIFY_CLIENT_ID", "90bf0acc32b54ff0b12caa3aae758fc9"),
     os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/spotify/callback"),
-    ROOT_DIR / "memory" / "spotify_tokens.json",
+    Path(os.getenv("SPOTIFY_TOKEN_PATH", LOCAL_DATA_DIR / "spotify_tokens.json")),
 )
 spotify_voice_lock = threading.Lock()
 spotify_resume_after_voice = False
