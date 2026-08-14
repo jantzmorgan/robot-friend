@@ -180,7 +180,10 @@ def robot_context(user_message: str) -> str:
         "modes that animate your eyes and LED colors. Your other real cosmetic modes are "
         "Super Saiyan, love, celebration, sleep, spooky, scanner, glitch, police, power-up, "
         "laughing, and embarrassed. Asking you to cry or start crying "
-        "activates your blue tears. Acknowledge these modes as things you physically do.\n\n"
+        "activates your blue tears. Acknowledge these modes as things you physically do. "
+        "Face colors, expressions, effects, and modes are built into you and NEVER require "
+        "Spotify, an open music app, or any external device. Do not call the Spotify tool "
+        "for a face or cosmetic request.\n\n"
         "SPOKEN TURN RULES:\n"
         "Default to one natural sentence of 5-20 words. Answer directly and stop. "
         "Do not use headings, lists, recaps, caveats, or offer extra help in ordinary "
@@ -201,8 +204,12 @@ def realtime_session_config() -> dict:
         "Never end in the middle of a sentence. Treat follow-up speech as the same conversation. "
         "If the user pauses mid-thought, wait instead of jumping in. If interrupted, stop "
         "and listen. Briefly acknowledge an explicit goodbye or stop-listening request. "
-        "Your name is Herman. For every request to play, pause, resume, skip, identify, "
-        "or change the volume of Spotify, call control_spotify and use its real result. "
+        "Your name is Herman. Call control_spotify ONLY when the user is clearly requesting "
+        "music or Spotify audio: a song, artist, album, playlist, Liked Songs, music queue, "
+        "currently playing track, or music playback/volume. Never call it for face colors, "
+        "expressions, effects, dance mode, fire, tears, or any cosmetic mode—even if the user "
+        "uses words like play, start, stop, mode, or effect. For actual Spotify requests, "
+        "call control_spotify and use its real result. "
         "This includes random artist songs, artist playback, albums, named playlists, "
         "playlist shuffle, Liked Songs, and adding a song to the queue. Pass the user's "
         "complete wording to the tool without rewriting song, artist, or playlist names."
@@ -221,7 +228,11 @@ def realtime_session_config() -> dict:
         "tools": [{
             "type": "function",
             "name": "control_spotify",
-            "description": "Control connected Spotify playback or identify the current song.",
+            "description": (
+                "Control Spotify MUSIC only: songs, artists, albums, playlists, Liked Songs, "
+                "music queue, track identification, or music playback/volume. Never use for "
+                "Herman's face, colors, expressions, effects, dance, fire, tears, or modes."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"command": {"type": "string"}},
@@ -866,6 +877,24 @@ def spotify_command():
     command = str((request.get_json(silent=True) or {}).get("command", "")).strip()
     if not command:
         raise ValueError("No Spotify command supplied")
+    lowered = command.lower()
+    cosmetic_words = (
+        "face", "color", "colour", "effect", "mode", "dance", "fire", "flame",
+        "cry", "tear", "super saiyan", "love mode", "celebration", "sleep mode",
+        "spooky", "scanner", "glitch", "police mode", "power up", "laugh",
+        "embarrassed", "blush", "rainbow",
+    )
+    music_words = (
+        "spotify", "music", "song", "track", "artist", "album", "playlist",
+        "liked songs", "queue",
+    )
+    if any(word in lowered for word in cosmetic_words) and not any(
+        word in lowered for word in music_words
+    ):
+        return jsonify(
+            ok=True, action="local_face", local=True,
+            message="The local face controller already performed this cosmetic request. Spotify is not needed.",
+        )
     try:
         result = spotify.command(command)
     except SpotifyError as error:

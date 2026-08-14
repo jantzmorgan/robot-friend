@@ -129,6 +129,8 @@ class ApiTests(unittest.TestCase):
         self.assertGreaterEqual(config["max_output_tokens"], 800)
         self.assertEqual(config["tools"][0]["name"], "control_spotify")
         self.assertIn("Your name is Herman", config["instructions"])
+        self.assertIn("Call control_spotify ONLY", config["instructions"])
+        self.assertIn("Never use for Herman's face", config["tools"][0]["description"])
 
     def test_robot_knows_spoken_face_commands_are_real(self):
         context = robot_context("Make your face blue")
@@ -137,6 +139,16 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Never say you cannot change your face color", context)
         self.assertIn("real dance, party, and disco", context)
         self.assertIn("Super Saiyan", context)
+        self.assertIn("NEVER require Spotify", context)
+
+    def test_cosmetic_request_is_never_sent_to_spotify(self):
+        response = self.client.post(
+            "/spotify/command", json={"command": "start Super Saiyan mode"}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["local"])
+        self.assertIn("Spotify is not needed", data["message"])
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "", "ROBOT_REALTIME": "1"})
     def test_missing_key_is_reported_before_session_handoff(self):
