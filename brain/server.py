@@ -7,6 +7,7 @@ drivers can later replace the simulated implementations through robot.factory.
 from __future__ import annotations
 
 import atexit
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import logging
@@ -789,30 +790,41 @@ def create_realtime_token():
     with realtime_owner_lock:
         realtime_owner = client_id
     initial_message = ""
+    handoff_audio = None
     if wake_listener is not None:
         wake_listener.pause(wait=True)
         handoff_audio = wake_listener.take_pending_command()
-        if handoff_audio:
-            try:
-                initial_message = transcribe_command(handoff_audio)
-            except Exception:
-                app.logger.exception("Could not transcribe immediate post-wake speech")
     runtime.state.update(
         listening=True, speaking=False, wake_detected=True,
         wake_paused=True, mode="listening",
     )
     arm_realtime_guard(10.0)
     safety_id = hashlib.sha256(CURRENT_MEMORY_SUBJECT.encode("utf-8")).hexdigest()
-    upstream = httpx.post(
-        "https://api.openai.com/v1/realtime/client_secrets",
-        headers={
-            "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
-            "Content-Type": "application/json",
-            "OpenAI-Safety-Identifier": safety_id,
-        },
-        json={"session": realtime_session_config()},
-        timeout=30.0,
-    )
+    def request_token():
+        return httpx.post(
+            "https://api.openai.com/v1/realtime/client_secrets",
+            headers={
+                "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                "Content-Type": "application/json",
+                "OpenAI-Safety-Identifier": safety_id,
+            },
+            json={"session": realtime_session_config()},
+            timeout=30.0,
+        )
+
+    if handoff_audio:
+        # Token minting and transcription are independent network calls. Run
+        # them together so preserving the first sentence does not add both
+        # latencies one after the other.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            transcription = executor.submit(transcribe_command, handoff_audio)
+            upstream = request_token()
+            try:
+                initial_message = transcription.result()
+            except Exception:
+                app.logger.exception("Could not transcribe immediate post-wake speech")
+    else:
+        upstream = request_token()
     if upstream.is_error:
         try:
             detail = upstream.json().get("error", {}).get("message", "")

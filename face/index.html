@@ -2449,6 +2449,7 @@ function monitorRealtimeAudio(stream) {
         face.speaking = audible;
         if (audible && !backendSpeaking) {
             backendSpeaking = true;
+            setExpression("normal");
             reportRealtimeState("speaking");
         } else if (!audible && backendSpeaking) {
             backendSpeaking = false;
@@ -2611,6 +2612,8 @@ async function startRealtimeConversation() {
             const initialMessage = (tokenData.initial_message || "").trim();
             if (initialMessage) {
                 realtimeUserTranscript = initialMessage;
+                setExpression("thinking");
+                reportRealtimeState("thinking");
                 postRobotEndpoint("/realtime/user", {message: initialMessage});
                 realtimeChannel.send(JSON.stringify({
                     type: "conversation.item.create",

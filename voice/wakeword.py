@@ -224,8 +224,8 @@ class WakeWordListener:
         if self.stream is None:
             return None
         max_seconds = float(os.getenv("ROBOT_HANDOFF_MAX_SECONDS", "15"))
-        silence_seconds = float(os.getenv("ROBOT_HANDOFF_SILENCE_SECONDS", "1.8"))
-        start_timeout = float(os.getenv("ROBOT_HANDOFF_START_TIMEOUT_SECONDS", "4.0"))
+        silence_seconds = float(os.getenv("ROBOT_HANDOFF_SILENCE_SECONDS", "1.2"))
+        start_timeout = float(os.getenv("ROBOT_HANDOFF_START_TIMEOUT_SECONDS", "3.5"))
         pre_roll = deque(maxlen=max(1, int(0.4 * RATE / CHUNK)))
         frames = []
         speech_started = False
