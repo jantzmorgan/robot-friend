@@ -474,6 +474,17 @@ const finalHeight =
     clearGlow();
 
     applyFacePaint();
+    if (faceTheme === "rainbow") {
+        const eyeRainbow = ctx.createLinearGradient(-finalWidth / 2, 0, finalWidth / 2, 0);
+        const offset = (performance.now() / 35) % 360;
+        for (let index = 0; index <= 6; index += 1) {
+            eyeRainbow.addColorStop(
+                index / 6,
+                `hsl(${(offset + index * 60) % 360} 100% 66%)`
+            );
+        }
+        ctx.fillStyle = eyeRainbow;
+    }
     ctx.fill();
 
     ctx.restore();
