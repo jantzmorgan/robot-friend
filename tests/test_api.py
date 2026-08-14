@@ -57,6 +57,18 @@ class ApiTests(unittest.TestCase):
         apply_spoken_face_colors("Stop effects")
         self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
 
+    def test_natural_rainbow_requests_always_apply(self):
+        for command in (
+            "Make yourself rainbow", "Go rainbow", "Rainbow mode",
+            "Show me your rainbow face", "Full rainbow", "Become rainbow",
+        ):
+            with self.subTest(command=command):
+                runtime.state.update(face_theme="herman", face_colors=["#FF5A2D"])
+                apply_spoken_face_colors(command)
+                state = runtime.state.snapshot()
+                self.assertEqual(state["face_theme"], "rainbow")
+                self.assertEqual(state["face_colors"], ["#42E8FF", "#7B8CFF", "#FF4FC8"])
+
     def test_tears_can_start_and_stop(self):
         apply_spoken_face_colors("Cry for me")
         self.assertEqual(runtime.state.snapshot()["face_effect"], "tears")

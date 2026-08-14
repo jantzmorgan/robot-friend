@@ -332,7 +332,19 @@ def apply_spoken_face_colors(message: str) -> list[str] | None:
     has_color = any(name in lowered for name in FACE_COLORS) or any(
         word in lowered for word in ("rainbow", "multicolor", "multi color", "original")
     )
-    action = bool(re.search(r"\b(make|change|turn|set|switch|go|be|light)\b", lowered)) and has_color
+    color_action = bool(re.search(
+        r"\b(make|change|turn|set|switch|go|be|become|show|use|light)\b", lowered
+    ))
+    direct_color_mode = bool(re.search(
+        r"\b(rainbow|multicolor|multi color|full spectrum|original|herman|"
+        + "|".join(re.escape(name) for name in FACE_COLORS)
+        + r")\s+(?:face|color|colours?|mode)\b",
+        lowered,
+    )) or bool(re.fullmatch(
+        r"(?:please\s+)?(?:full\s+)?(?:rainbow|multicolor|multi color)(?:\s+please)?[.!?]?",
+        lowered.strip(),
+    ))
+    action = has_color and (color_action or direct_color_mode)
     effect = None
     expression = None
     mode_words = "|".join(re.escape(phrase) for _, phrases in FACE_MODES.values() for phrase in phrases)
