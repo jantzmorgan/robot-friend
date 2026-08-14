@@ -14,6 +14,7 @@ os.environ["HERMAN_INNER_LIFE_PATH"] = os.path.join(
 from brain.server import (
     app, apply_spoken_face_colors, arm_realtime_guard, is_exit_phrase,
     realtime_readiness, realtime_session_config, robot_context, runtime,
+    transcribe_command,
 )
 
 
@@ -247,6 +248,24 @@ class ApiTests(unittest.TestCase):
         transcribe.assert_called_once_with(b"post-wake-wav")
         self.assertIn("/v1/realtime/client_secrets", post.call_args.args[0])
         self.assertIn("session", post.call_args.kwargs["json"])
+
+    @patch("brain.server.get_openai_client")
+    def test_handoff_transcription_removes_only_leading_wake_phrase(self, client):
+        client.return_value.audio.transcriptions.create.return_value.text = (
+            "Hey Herman, what have you been doing today?"
+        )
+        self.assertEqual(
+            transcribe_command(b"wake-and-command-wav"),
+            "what have you been doing today?",
+        )
+
+        client.return_value.audio.transcriptions.create.return_value.text = (
+            "Tell me why Herman likes Randy"
+        )
+        self.assertEqual(
+            transcribe_command(b"ordinary-command-wav"),
+            "Tell me why Herman likes Randy",
+        )
 
     def test_realtime_watchdog_recovers_abandoned_browser_session(self):
         runtime.state.update(

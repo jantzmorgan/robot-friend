@@ -504,7 +504,17 @@ def transcribe_command(audio_bytes: bytes) -> str:
         file=("robot-command.wav", audio_bytes, "audio/wav"),
         language="en",
     )
-    return str(transcript.text).strip()
+    message = str(transcript.text).strip()
+    # The preserved wake-word audio prevents the first command word from being
+    # clipped. Remove only a leading wake phrase before sending the actual
+    # request into Herman's conversation.
+    return re.sub(
+        r"^\s*(?:hey\s+)?(?:herman|jarvis)\s*[,.:;!?-]*\s*",
+        "",
+        message,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
 
 
 def process_wake_command() -> None:

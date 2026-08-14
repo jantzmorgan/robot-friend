@@ -51,6 +51,13 @@ class WakeWordListener:
         self.pending_command_audio = None
         self.handoff_capturing = threading.Event()
 
+        # OpenWakeWord decides on whole audio chunks. The chunk that crosses
+        # the wake threshold can already contain the first word after
+        # "Hey Herman", so retain a short rolling window for the handoff.
+        self.wake_audio_history = deque(
+            maxlen=max(1, int(1.25 * RATE / CHUNK))
+        )
+
 
     # ========================================================
     # START
@@ -219,14 +226,17 @@ class WakeWordListener:
         return output.getvalue()
 
 
-    def _capture_handoff_command(self):
+    def _capture_handoff_command(self, wake_audio=None):
         """Capture speech immediately following the wake word on the open stream."""
         if self.stream is None:
             return None
         max_seconds = float(os.getenv("ROBOT_HANDOFF_MAX_SECONDS", "15"))
         silence_seconds = float(os.getenv("ROBOT_HANDOFF_SILENCE_SECONDS", "1.2"))
         start_timeout = float(os.getenv("ROBOT_HANDOFF_START_TIMEOUT_SECONDS", "3.5"))
-        pre_roll = deque(maxlen=max(1, int(0.4 * RATE / CHUNK)))
+        pre_roll = deque(
+            wake_audio or (),
+            maxlen=max(1, int(1.25 * RATE / CHUNK)),
+        )
         frames = []
         speech_started = False
         silent_chunks = 0
@@ -327,6 +337,8 @@ class WakeWordListener:
                     exception_on_overflow=False
                 )
 
+                self.wake_audio_history.append(raw_audio)
+
 
                 audio_frame = np.frombuffer(
                     raw_audio,
@@ -372,6 +384,8 @@ class WakeWordListener:
                         with self.pending_command_lock:
                             self.pending_command_audio = None
 
+                        wake_audio = list(self.wake_audio_history)
+
                         self.on_wake()
 
                         # The browser cannot hear audio spoken while its WebRTC
@@ -379,7 +393,7 @@ class WakeWordListener:
                         # on the already-open wake microphone for handoff.
                         self.handoff_capturing.set()
                         try:
-                            handoff_audio = self._capture_handoff_command()
+                            handoff_audio = self._capture_handoff_command(wake_audio)
                             with self.pending_command_lock:
                                 self.pending_command_audio = handoff_audio
                         finally:
