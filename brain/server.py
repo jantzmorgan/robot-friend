@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from memory.memory_manager import RobotMemory
 from integrations.spotify import SpotifyController, SpotifyError
+from personality.inner_life import HermanInnerLife
 from robot.factory import create_runtime
 from robot.orchestrator import Orchestrator
 from robot.runtime import SafetyError
@@ -50,10 +51,15 @@ def prevent_stale_robot_control(response):
     return response
 
 PERSONALITY_PATH = ROOT_DIR / "personality" / "robot_personality.md"
+CHARACTER_CANON_PATH = ROOT_DIR / "personality" / "herman_canon.md"
 LOCAL_DATA_DIR = Path(os.getenv("LOCALAPPDATA", ROOT_DIR / "memory")) / "RobotFriend"
 MEMORY_PATH = Path(os.getenv("ROBOT_MEMORY_PATH", LOCAL_DATA_DIR / "robot_memory.db"))
 PERSONALITY = PERSONALITY_PATH.read_text(encoding="utf-8").strip()
+CHARACTER_CANON = CHARACTER_CANON_PATH.read_text(encoding="utf-8").strip()
 memory_manager = RobotMemory(MEMORY_PATH)
+inner_life = HermanInnerLife(
+    Path(os.getenv("HERMAN_INNER_LIFE_PATH", LOCAL_DATA_DIR / "herman_inner_life.json"))
+)
 runtime = create_runtime()
 orchestrator = Orchestrator(runtime)
 conversation: list[dict[str, str]] = []
@@ -163,7 +169,11 @@ FACE_COLORS = {
 MEMORY_CURATOR_INSTRUCTIONS = """You curate durable memory for a companion robot.
 Return only a JSON array with at most five objects containing text, category,
 and importance (0.0-1.0). Store stable preferences, people, projects, goals,
-inside jokes, promises, or milestones. Never store secrets or routine small talk.
+inside jokes, promises, milestones, jokes the user enjoys or tells, corrections,
+and explicit guidance about Herman's personality or worldview. Preserve useful
+setup for future teasing and callbacks, but never turn a one-off remark into a
+permanent trait. Never store secrets, routine small talk, or fictional activities
+that Herman invented in his own reply as if they were facts about the user.
 Never infer or guess a person's name. Store a name only when the user explicitly
 says what their name is. Use [] when nothing deserves long-term storage."""
 
@@ -193,8 +203,10 @@ def get_openai_client():
 def robot_context(user_message: str) -> str:
     state = runtime.state.snapshot()
     memory = memory_manager.get_context(user_message, CURRENT_MEMORY_SUBJECT, limit=6)
+    life_context = inner_life.context()
     return (
-        f"{PERSONALITY}\n\nCURRENT ROBOT STATE (real telemetry; do not invent more):\n"
+        f"{PERSONALITY}\n\n{CHARACTER_CANON}\n\n{life_context}\n\n"
+        "CURRENT ROBOT STATE (real telemetry; do not invent more):\n"
         f"{json.dumps(state, indent=2)}\n\n"
         "FACE CAPABILITIES:\n"
         "You genuinely control your visible LED face. You can change it to one or "

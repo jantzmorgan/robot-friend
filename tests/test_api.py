@@ -7,6 +7,9 @@ from unittest.mock import Mock, patch
 os.environ["ROBOT_HARDWARE"] = "sim"
 os.environ["ROBOT_CAMERA"] = "sim"
 os.environ["ROBOT_MEMORY_PATH"] = os.path.join(tempfile.gettempdir(), "robot_friend_test.db")
+os.environ["HERMAN_INNER_LIFE_PATH"] = os.path.join(
+    tempfile.gettempdir(), "herman_inner_life_api_test.json"
+)
 
 from brain.server import (
     app, apply_spoken_face_colors, arm_realtime_guard, is_exit_phrase,
@@ -165,6 +168,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn("real dance, party, and disco", context)
         self.assertIn("Super Saiyan", context)
         self.assertIn("NEVER require Spotify", context)
+        self.assertIn("Herman's Character Canon", context)
+        self.assertIn("CURRENT FICTIONAL INNER LIFE", context)
+        self.assertIn("Block Blast", context)
+        self.assertIn("Randy Marsh", context)
+        self.assertIn("invisible blog", context.lower())
 
     def test_cosmetic_request_is_never_sent_to_spotify(self):
         response = self.client.post(
