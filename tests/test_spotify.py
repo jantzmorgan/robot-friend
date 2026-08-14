@@ -61,6 +61,53 @@ class SpotifyControllerTests(unittest.TestCase):
             self.assertIn("Liked Songs", self.controller.command("shuffle my liked songs")["message"])
             self.assertEqual(self.controller.command("add One More Time to the queue")["action"], "queue")
 
+    def test_exact_song_request_selects_matching_artist_not_first_result(self):
+        self.controller.token_path.write_text(
+            '{"access_token":"test","refresh_token":"refresh","expires_at":99999999999}',
+            encoding="utf-8",
+        )
+
+        def fake_request(method, path, **kwargs):
+            class Response:
+                status_code = 200
+                def json(self):
+                    if path == "/me/player/devices":
+                        return {"devices": [{"id": "laptop", "is_active": True}]}
+                    return {"tracks": {"items": [
+                        {"name": "Hurt", "uri": "spotify:track:wrong", "popularity": 99,
+                         "artists": [{"name": "Nine Inch Nails"}]},
+                        {"name": "Hurt", "uri": "spotify:track:right", "popularity": 80,
+                         "artists": [{"name": "Johnny Cash"}]},
+                    ]}}
+            return Response()
+
+        with patch.object(self.controller, "_request", side_effect=fake_request) as request, \
+             patch.object(self.controller, "_start_later") as start:
+            result = self.controller.command("play Hurt by Johnny Cash")
+            self.assertEqual(result["message"], "Playing Hurt by Johnny Cash.")
+            start.assert_called_once_with({"uris": ["spotify:track:right"]})
+            search = next(call for call in request.call_args_list if call.args[1] == "/search")
+            self.assertEqual(search.kwargs["params"]["limit"], 10)
+            self.assertIn('track:"Hurt"', search.kwargs["params"]["q"])
+            self.assertIn('artist:"Johnny Cash"', search.kwargs["params"]["q"])
+
+    def test_exact_song_request_avoids_unrequested_live_version(self):
+        tracks = [
+            {"name": "Dreams - Live", "uri": "spotify:track:live", "popularity": 90,
+             "artists": [{"name": "Fleetwood Mac"}]},
+            {"name": "Dreams", "uri": "spotify:track:studio", "popularity": 70,
+             "artists": [{"name": "Fleetwood Mac"}]},
+        ]
+        selected = self.controller._best_track_match(tracks, "Dreams", "Fleetwood Mac")
+        self.assertEqual(selected["uri"], "spotify:track:studio")
+
+    def test_exact_song_request_refuses_wrong_artist(self):
+        tracks = [{
+            "name": "Hurt", "uri": "spotify:track:wrong",
+            "artists": [{"name": "Nine Inch Nails"}],
+        }]
+        self.assertIsNone(self.controller._best_track_match(tracks, "Hurt", "Johnny Cash"))
+
 
 if __name__ == "__main__":
     unittest.main()

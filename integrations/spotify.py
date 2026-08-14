@@ -150,6 +150,64 @@ class SpotifyController:
         ).json()
         return (result.get(f"{item_type}s") or {}).get("items") or []
 
+    @staticmethod
+    def _normalized_name(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+    @classmethod
+    def _base_track_name(cls, value: str) -> str:
+        # Spotify often appends edition information that the listener did not say.
+        value = re.sub(r"\s*[\[(].*?[\]) ]\s*$", "", value).strip()
+        value = re.sub(
+            r"\s+-\s+(?:remaster(?:ed)?|live|radio edit|single version|album version)\b.*$",
+            "", value, flags=re.I,
+        ).strip()
+        return cls._normalized_name(value)
+
+    @classmethod
+    def _best_track_match(cls, tracks: list[dict], title: str, artist: str) -> dict | None:
+        wanted_title = cls._normalized_name(title)
+        wanted_base = cls._base_track_name(title)
+        wanted_artist = cls._normalized_name(artist)
+        requested_variant = bool(re.search(
+            r"\b(?:live|remix|remaster(?:ed)?|acoustic|karaoke|instrumental|cover)\b",
+            title, re.I,
+        ))
+
+        best: tuple[int, int, dict] | None = None
+        for track in tracks:
+            if track.get("is_playable") is False:
+                continue
+            track_title = cls._normalized_name(track.get("name", ""))
+            track_base = cls._base_track_name(track.get("name", ""))
+            artist_names = [
+                cls._normalized_name(item.get("name", ""))
+                for item in track.get("artists", [])
+            ]
+            score = 0
+            if track_title == wanted_title:
+                score += 120
+            elif track_base == wanted_base:
+                score += 105
+            elif wanted_title and (track_title.startswith(wanted_title) or wanted_title.startswith(track_base)):
+                score += 45
+            if wanted_artist in artist_names:
+                score += 120
+            elif any(wanted_artist in name or name in wanted_artist for name in artist_names if name):
+                score += 45
+            if not requested_variant and re.search(
+                r"\b(?:live|remix|acoustic|karaoke|instrumental|tribute|cover)\b",
+                track.get("name", ""), re.I,
+            ):
+                score -= 80
+            popularity = int(track.get("popularity") or 0)
+            candidate = (score, popularity, track)
+            if best is None or candidate[:2] > best[:2]:
+                best = candidate
+
+        # Require a strong title and artist match rather than playing a plausible wrong song.
+        return best[2] if best and best[0] >= 210 else None
+
     def _start_later(self, body: dict, shuffle: bool | None = None) -> None:
         def start() -> None:
             if shuffle is not None:
@@ -275,10 +333,30 @@ class SpotifyController:
         query = re.sub(r"\s+(?:to (?:the )?queue|next)$", "", query, flags=re.I).strip()
         if not query or (query == text and not queue_request):
             raise SpotifyError("Tell me what you want Spotify to play.")
-        items = self._search(query, "track")
+
+        exact_request = re.fullmatch(
+            r"(?:the song\s+)?(.+?)\s+by\s+(.+)", query, re.I,
+        )
+        if exact_request:
+            title = self._clean_subject(exact_request.group(1))
+            artist = self._clean_subject(exact_request.group(2))
+            safe_title = title.replace('"', "")
+            safe_artist = artist.replace('"', "")
+            items = self._search(
+                f'track:"{safe_title}" artist:"{safe_artist}"', "track", limit=10,
+            )
+            track = self._best_track_match(items, title, artist)
+            if track is None:
+                raise SpotifyError(
+                    f"I couldn't confidently match {title} by {artist}. Please repeat the exact title and artist."
+                )
+        else:
+            items = self._search(query, "track", limit=10)
+            track = items[0] if items else None
         if not items:
             raise SpotifyError(f"I couldn't find {query} on Spotify.")
-        track = items[0]
+        if track is None:
+            raise SpotifyError(f"I couldn't find {query} on Spotify.")
         artists = ", ".join(artist["name"] for artist in track.get("artists", []))
         if queue_request:
             self._request("POST", "/me/player/queue", params={"uri": track["uri"]})
