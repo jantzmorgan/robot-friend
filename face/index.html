@@ -2451,6 +2451,25 @@ function monitorRealtimeAudio(stream) {
     tick();
 }
 
+async function waitForRealtimeAudioToFinish(maxWaitMs = 5000) {
+    // response.done means generation finished, not that WebRTC has played every
+    // buffered sample. Keep the connection alive until the speaker is quiet.
+    const started = performance.now();
+    realtimeAudioLastLoud = Math.max(realtimeAudioLastLoud, started);
+    await new Promise(resolve => {
+        const check = () => {
+            const now = performance.now();
+            const audioIsQuiet = now - realtimeAudioLastLoud >= 650;
+            if (!realtimePeer || audioIsQuiet || now - started >= maxWaitMs) {
+                resolve();
+                return;
+            }
+            setTimeout(check, 50);
+        };
+        setTimeout(check, 100);
+    });
+}
+
 async function saveRealtimeTurn() {
     if (!realtimeUserTranscript && !realtimeAssistantTranscript) return;
     try {
@@ -2521,6 +2540,7 @@ async function handleRealtimeEvent(event) {
             await saveRealtimeTurn();
             if (realtimeExitRequested || realtimeEndAfterToolResponse) {
                 realtimeEndAfterToolResponse = false;
+                await waitForRealtimeAudioToFinish();
                 await endRealtimeConversation();
             } else {
                 setExpression("curious");
