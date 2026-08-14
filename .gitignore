@@ -1,4 +1,4 @@
 .env
+memory/spotify_tokens.json
 __pycache__/
 *.pyc
-voice/kokoro/*.onnx

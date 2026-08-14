@@ -107,6 +107,11 @@ class SimulatedAudioOutput(AudioOutputDriver):
 class KokoroAudioOutput(AudioOutputDriver):
     """Adapter for the existing local Kokoro/Fenrir HTTP service."""
 
+    # The Kokoro service reports /speech/event at the first playable audio
+    # chunk and again after playback. Do not mark the robot as speaking while
+    # this adapter is merely waiting for speech generation.
+    reports_playback = True
+
     def __init__(self, base_url: str = "http://127.0.0.1:8001") -> None:
         self.base_url = base_url.rstrip("/")
 

@@ -1,4 +1,7 @@
 import io
+from collections import deque
+import os
+from pathlib import Path
 import threading
 import time
 import wave
@@ -17,9 +20,9 @@ from openwakeword.model import Model
 RATE = 16000
 CHANNELS = 1
 CHUNK = 1280
-THRESHOLD = 0.5
-
-WAKE_MODEL_NAME = "hey_jarvis"
+DEFAULT_THRESHOLD = float(os.getenv("ROBOT_WAKE_THRESHOLD", "0.5"))
+HERMAN_THRESHOLD = float(os.getenv("ROBOT_HERMAN_WAKE_THRESHOLD", "0.45"))
+CUSTOM_MODEL = Path(__file__).resolve().parent / "models" / "hey_herman.onnx"
 
 
 # ============================================================
@@ -44,6 +47,16 @@ class WakeWordListener:
         self.pause_complete = threading.Event()
 
         self.stream_lock = threading.Lock()
+        self.pending_command_lock = threading.Lock()
+        self.pending_command_audio = None
+        self.handoff_capturing = threading.Event()
+
+        # OpenWakeWord decides on whole audio chunks. The chunk that crosses
+        # the wake threshold can already contain the first word after
+        # "Hey Herman", so retain a short rolling window for the handoff.
+        self.wake_audio_history = deque(
+            maxlen=max(1, int(1.25 * RATE / CHUNK))
+        )
 
 
     # ========================================================
@@ -62,11 +75,10 @@ class WakeWordListener:
         openwakeword.utils.download_models()
 
 
-        self.model = Model(
-            wakeword_models=[
-                WAKE_MODEL_NAME
-            ]
-        )
+        wake_models = ["hey_jarvis"]
+        if CUSTOM_MODEL.exists():
+            wake_models.insert(0, str(CUSTOM_MODEL))
+        self.model = Model(wakeword_models=wake_models, inference_framework="onnx")
 
 
         self.audio = pyaudio.PyAudio()
@@ -87,7 +99,7 @@ class WakeWordListener:
         print("Wake word listener online.")
 
         print(
-            'Temporary wake phrase: "Hey Jarvis"'
+            'Wake phrases: "Hey Herman" (primary), "Hey Jarvis" (fallback)'
         )
 
 
@@ -178,7 +190,10 @@ class WakeWordListener:
         # The HTTP pause endpoint must not return until Windows has actually
         # released the input device for browser speech recognition.
         if wait and threading.current_thread() is not self.thread:
-            self.pause_complete.wait(timeout=2.0)
+            timeout = 2.0
+            if self.handoff_capturing.is_set():
+                timeout = float(os.getenv("ROBOT_HANDOFF_MAX_SECONDS", "15")) + 2.0
+            self.pause_complete.wait(timeout=timeout)
 
 
     # ========================================================
@@ -189,6 +204,71 @@ class WakeWordListener:
 
         self.pause_complete.clear()
         self.pause_requested.clear()
+
+
+    def take_pending_command(self):
+        """Return and clear speech captured during the wake-to-browser handoff."""
+        with self.pending_command_lock:
+            audio_bytes = self.pending_command_audio
+            self.pending_command_audio = None
+            return audio_bytes
+
+
+    def _wav_bytes(self, frames):
+        if not frames:
+            return None
+        output = io.BytesIO()
+        with wave.open(output, "wb") as wav_file:
+            wav_file.setnchannels(CHANNELS)
+            wav_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
+            wav_file.setframerate(RATE)
+            wav_file.writeframes(b"".join(frames))
+        return output.getvalue()
+
+
+    def _capture_handoff_command(self, wake_audio=None):
+        """Capture speech immediately following the wake word on the open stream."""
+        if self.stream is None:
+            return None
+        max_seconds = float(os.getenv("ROBOT_HANDOFF_MAX_SECONDS", "15"))
+        silence_seconds = float(os.getenv("ROBOT_HANDOFF_SILENCE_SECONDS", "1.2"))
+        start_timeout = float(os.getenv("ROBOT_HANDOFF_START_TIMEOUT_SECONDS", "3.5"))
+        pre_roll = deque(
+            wake_audio or (),
+            maxlen=max(1, int(1.25 * RATE / CHUNK)),
+        )
+        frames = []
+        speech_started = False
+        silent_chunks = 0
+        silence_chunks_to_stop = max(1, int(silence_seconds * RATE / CHUNK))
+        max_chunks = max(1, int(max_seconds * RATE / CHUNK))
+        start_timeout_chunks = max(1, int(start_timeout * RATE / CHUNK))
+        speech_threshold = 350
+
+        print("Capturing immediate post-wake speech...")
+        for chunk_index in range(max_chunks):
+            raw_audio = self.stream.read(CHUNK, exception_on_overflow=False)
+            level = float(np.sqrt(np.mean(
+                np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) ** 2
+            )))
+            if level >= speech_threshold:
+                if not speech_started:
+                    frames.extend(pre_roll)
+                speech_started = True
+                silent_chunks = 0
+            elif speech_started:
+                silent_chunks += 1
+
+            if speech_started:
+                frames.append(raw_audio)
+                if silent_chunks >= silence_chunks_to_stop:
+                    break
+            else:
+                pre_roll.append(raw_audio)
+                if chunk_index + 1 >= start_timeout_chunks:
+                    break
+
+        return self._wav_bytes(frames)
 
 
     # ========================================================
@@ -257,6 +337,8 @@ class WakeWordListener:
                     exception_on_overflow=False
                 )
 
+                self.wake_audio_history.append(raw_audio)
+
 
                 audio_frame = np.frombuffer(
                     raw_audio,
@@ -276,8 +358,9 @@ class WakeWordListener:
                     )
 
 
+                    threshold = HERMAN_THRESHOLD if "herman" in model_name.lower() else DEFAULT_THRESHOLD
                     if (
-                        score >= THRESHOLD
+                        score >= threshold
                         and
                         time.time() -
                         last_activation >
@@ -298,8 +381,23 @@ class WakeWordListener:
 
                         self.model.reset()
 
+                        with self.pending_command_lock:
+                            self.pending_command_audio = None
+
+                        wake_audio = list(self.wake_audio_history)
 
                         self.on_wake()
+
+                        # The browser cannot hear audio spoken while its WebRTC
+                        # connection is starting. Preserve that first sentence
+                        # on the already-open wake microphone for handoff.
+                        self.handoff_capturing.set()
+                        try:
+                            handoff_audio = self._capture_handoff_command(wake_audio)
+                            with self.pending_command_lock:
+                                self.pending_command_audio = handoff_audio
+                        finally:
+                            self.handoff_capturing.clear()
 
 
                         break
@@ -338,6 +436,9 @@ class WakeWordListener:
             frames_per_buffer=CHUNK,
         )
         frames = []
+        # Keep a small rolling buffer so the consonant that crosses the voice
+        # threshold is not the first sound written to the transcript WAV.
+        pre_roll = deque(maxlen=max(1, int(0.4 * RATE / CHUNK)))
         speech_started = False
         silent_chunks = 0
         silence_chunks_to_stop = max(1, int(silence_seconds * RATE / CHUNK))
@@ -353,6 +454,8 @@ class WakeWordListener:
                 )))
 
                 if level >= speech_threshold:
+                    if not speech_started:
+                        frames.extend(pre_roll)
                     speech_started = True
                     silent_chunks = 0
                 elif speech_started:
@@ -362,6 +465,8 @@ class WakeWordListener:
                     frames.append(raw_audio)
                     if silent_chunks >= silence_chunks_to_stop:
                         break
+                else:
+                    pre_roll.append(raw_audio)
         finally:
             try:
                 command_stream.stop_stream()
@@ -373,13 +478,7 @@ class WakeWordListener:
             print("No command speech detected.")
             return None
 
-        output = io.BytesIO()
-        with wave.open(output, "wb") as wav_file:
-            wav_file.setnchannels(CHANNELS)
-            wav_file.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
-            wav_file.setframerate(RATE)
-            wav_file.writeframes(b"".join(frames))
-        return output.getvalue()
+        return self._wav_bytes(frames)
 
 
     # ========================================================

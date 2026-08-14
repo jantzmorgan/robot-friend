@@ -10,8 +10,10 @@ from typing import Any
 class RobotState:
     mode: str = "idle"
     expression: str = "neutral"
-    face_theme: str = "herman"
-    face_colors: list[str] = field(default_factory=lambda: ["#FF5A2D"])
+    face_theme: str = "rainbow"
+    face_colors: list[str] = field(
+        default_factory=lambda: ["#42E8FF", "#7B8CFF", "#FF4FC8"]
+    )
     face_effect: str = "auto"
     speaking: bool = False
     listening: bool = False

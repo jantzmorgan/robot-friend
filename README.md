@@ -17,6 +17,10 @@ python brain\server.py
 ```
 
 Open `http://127.0.0.1:8000`. Hardware/state endpoints work without an API key.
+Allow microphone access when the browser asks. Say **Hey Herman** (or the temporary
+fallback **Hey Jarvis**) once, then
+talk naturally without repeating the wake phrase. The live session ends after
+30 seconds of silence or when you say “stop listening,” “goodbye,” or “go to sleep.”
 
 Run verification:
 
@@ -35,6 +39,11 @@ Invoke-RestMethod http://127.0.0.1:8000/safety/reset -Method Post
 ```
 
 ## Voice output
+
+Wake-word conversations use OpenAI Realtime over WebRTC by default. This gives
+the browser echo cancellation, natural pause detection, and interruption support;
+the API key stays in Python and is never sent to the page. Set `ROBOT_REALTIME=0`
+to return to the original Python capture/transcribe/Kokoro conversation path.
 
 On Windows, an existing `OPENAI_API_KEY` automatically enables real speech through
 OpenAI and plays it through the default PC speakers. The older `ROBOT_AUDIO=sim`
@@ -74,6 +83,7 @@ partially working real-motor configuration.
 - `POST /face` with `expression` and optional `message`
 - `POST /tts`, `POST /speech/stop`, `POST /speech/event`
 - `POST /chat` (text response), `POST /respond` (response plus speech)
+- `POST /realtime/session`, `/realtime/event`, `/realtime/turn`, `/realtime/end`
 - `GET /memories`
 
 An emergency stop is latched: movement stays disabled until `/safety/reset`

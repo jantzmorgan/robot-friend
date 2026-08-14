@@ -199,6 +199,15 @@ async def stream_speech(
             # ready for playback.
             # ------------------------------------------------
 
+            sd.play(
+                samples,
+                sample_rate
+            )
+
+
+            # sd.play has now opened and started the output stream. Reporting
+            # after this call prevents the mouth from leading the speaker by
+            # the HTTP callback round-trip.
             if not actually_speaking:
 
                 actually_speaking = True
@@ -212,12 +221,6 @@ async def stream_speech(
                 print(
                     "Audio playback started."
                 )
-
-
-            sd.play(
-                samples,
-                sample_rate
-            )
 
 
             sd.wait()

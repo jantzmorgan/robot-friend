@@ -1,20 +1,44 @@
 import os
 import tempfile
+import time
 import unittest
+from unittest.mock import Mock, patch
 
 os.environ["ROBOT_HARDWARE"] = "sim"
 os.environ["ROBOT_CAMERA"] = "sim"
 os.environ["ROBOT_MEMORY_PATH"] = os.path.join(tempfile.gettempdir(), "robot_friend_test.db")
+os.environ["HERMAN_INNER_LIFE_PATH"] = os.path.join(
+    tempfile.gettempdir(), "herman_inner_life_api_test.json"
+)
 
-from brain.server import app, apply_spoken_face_colors, runtime
+from brain.server import (
+    app, apply_spoken_face_colors, arm_realtime_guard, is_exit_phrase,
+    realtime_readiness, realtime_session_config, robot_context, runtime,
+    transcribe_command,
+)
 
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
 
+    def test_natural_goodbyes_end_a_conversation(self):
+        phrases = [
+            "That's enough", "I'm done talking to you", "I'm leaving now",
+            "You can stop talking", "I've had enough", "See you later",
+            "Okay, that's enough, I'm done talking now",
+        ]
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertTrue(is_exit_phrase(phrase))
+        self.assertFalse(is_exit_phrase("Tell me about the song Goodbye Blue Sky"))
+
     def test_health_and_motion(self):
-        self.assertEqual(self.client.get("/health").status_code, 200)
+        health = self.client.get("/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertIn("realtime_ready", health.get_json()["services"])
+        face_response = self.client.get("/")
+        self.assertIn("no-store", face_response.headers["Cache-Control"])
         response = self.client.post("/motion", json={"linear": 0.2, "angular": 0})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["moving"])
@@ -47,6 +71,216 @@ class ApiTests(unittest.TestCase):
 
         apply_spoken_face_colors("Stop effects")
         self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
+
+    def test_natural_rainbow_requests_always_apply(self):
+        for command in (
+            "Make yourself rainbow", "Go rainbow", "Rainbow mode",
+            "Show me your rainbow face", "Full rainbow", "Become rainbow",
+        ):
+            with self.subTest(command=command):
+                runtime.state.update(face_theme="herman", face_colors=["#FF5A2D"])
+                apply_spoken_face_colors(command)
+                state = runtime.state.snapshot()
+                self.assertEqual(state["face_theme"], "rainbow")
+                self.assertEqual(state["face_colors"], ["#42E8FF", "#7B8CFF", "#FF4FC8"])
+
+    def test_tears_can_start_and_stop(self):
+        apply_spoken_face_colors("Cry for me")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "tears")
+
+        apply_spoken_face_colors("Stop crying")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "none")
+        self.assertEqual(state["expression"], "normal")
+
+    def test_start_crying_naturally_means_blue_tears(self):
+        apply_spoken_face_colors("Jarvis, start crying")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "tears")
+        self.assertEqual(state["expression"], "sad")
+
+    def test_dance_mode_can_start_and_stop(self):
+        apply_spoken_face_colors("Go into dance mode")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "dance")
+        self.assertEqual(state["expression"], "excited")
+
+        apply_spoken_face_colors("Stop dancing")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["face_effect"], "none")
+        self.assertEqual(state["expression"], "normal")
+
+    def test_all_cosmetic_modes_can_start(self):
+        commands = {
+            "Go Super Saiyan": "super_saiyan", "Love mode": "love",
+            "Celebrate": "celebration", "Sleep mode": "sleep",
+            "Spooky mode": "spooky", "Scanner mode": "scanner",
+            "Glitch out": "glitch", "Police mode": "police",
+            "Charge up": "powerup", "Laugh mode": "laugh",
+            "Blush mode": "embarrassed",
+        }
+        for command, expected in commands.items():
+            with self.subTest(command=command):
+                apply_spoken_face_colors(command)
+                self.assertEqual(runtime.state.snapshot()["face_effect"], expected)
+
+        apply_spoken_face_colors("Sleep mode")
+        self.assertEqual(runtime.state.snapshot()["expression"], "sleeping")
+
+        apply_spoken_face_colors("Stop Super Saiyan mode")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
+
+    def test_fire_can_start_and_stop(self):
+        apply_spoken_face_colors("Start the fire")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "fire")
+
+        apply_spoken_face_colors("Turn off the fire")
+        self.assertEqual(runtime.state.snapshot()["face_effect"], "none")
+
+    def test_mad_face_replaces_tears_with_automatic_fire(self):
+        apply_spoken_face_colors("Cry")
+        apply_spoken_face_colors("Switch to a mad face")
+        state = runtime.state.snapshot()
+        self.assertEqual(state["expression"], "annoyed")
+        self.assertEqual(state["face_effect"], "auto")
+
+    def test_realtime_config_uses_semantic_vad_and_short_audio_output(self):
+        config = realtime_session_config()
+        self.assertEqual(config["output_modalities"], ["audio"])
+        turn = config["audio"]["input"]["turn_detection"]
+        self.assertEqual(turn["type"], "semantic_vad")
+        self.assertTrue(turn["create_response"])
+        self.assertTrue(turn["interrupt_response"])
+        self.assertIn("under 20 words", config["instructions"])
+        self.assertIn("2-6 concise, complete sentences", config["instructions"])
+        self.assertGreaterEqual(config["max_output_tokens"], 800)
+        self.assertEqual(config["tools"][0]["name"], "control_spotify")
+        self.assertEqual(config["tools"][1]["name"], "end_conversation")
+        self.assertIn("ALWAYS call end_conversation", config["instructions"])
+        self.assertIn("Your name is Herman", config["instructions"])
+        self.assertIn("Call control_spotify ONLY", config["instructions"])
+        self.assertIn("Never use for Herman's face", config["tools"][0]["description"])
+
+    def test_robot_knows_spoken_face_commands_are_real(self):
+        context = robot_context("Make your face blue")
+        self.assertIn("local appearance controller", context.lower())
+        self.assertIn("treat the change as successfully performed", context)
+        self.assertIn("Never say you cannot change your face color", context)
+        self.assertIn("real dance, party, and disco", context)
+        self.assertIn("Super Saiyan", context)
+        self.assertIn("NEVER require Spotify", context)
+        self.assertIn("Herman's Character Canon", context)
+        self.assertIn("CURRENT FICTIONAL INNER LIFE", context)
+        self.assertIn("Block Blast", context)
+        self.assertIn("Randy Marsh", context)
+        self.assertIn("invisible blog", context.lower())
+
+    def test_robot_context_includes_honest_embodiment_plan(self):
+        context = robot_context("Will you be able to roll around and remind me?")
+        self.assertIn("Jetson Orin Nano 8GB", context)
+        self.assertIn("Waveshare UGV Rover", context)
+        self.assertIn("Scheduled reminders are also an approved capability", context)
+        self.assertIn("not yet implemented", context)
+        self.assertIn("Never describe a planned capability as impossible", context)
+
+    def test_cosmetic_request_is_never_sent_to_spotify(self):
+        response = self.client.post(
+            "/spotify/command", json={"command": "start Super Saiyan mode"}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["local"])
+        self.assertIn("Spotify is not needed", data["message"])
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "", "ROBOT_REALTIME": "1"})
+    def test_missing_key_is_reported_before_session_handoff(self):
+        ready, reason = realtime_readiness()
+        self.assertFalse(ready)
+        self.assertIn("OPENAI_API_KEY", reason)
+        response = self.client.post(
+            "/realtime/session", data="v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+            content_type="application/sdp"
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("OPENAI_API_KEY", response.get_json()["error"])
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "ROBOT_REALTIME": "1"})
+    @patch("brain.server.httpx.post")
+    def test_realtime_sdp_is_proxied_without_exposing_key(self, post):
+        upstream = Mock(status_code=200, text="answer-sdp", is_error=False)
+        post.return_value = upstream
+        response = self.client.post(
+            "/realtime/session", data="v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+            content_type="application/sdp"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_data(as_text=True), "answer-sdp")
+        kwargs = post.call_args.kwargs
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
+        self.assertIn("semantic_vad", kwargs["files"]["session"][1])
+
+    def test_realtime_state_and_turn_endpoints(self):
+        response = self.client.post("/realtime/event", json={"state": "thinking"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(runtime.state.snapshot()["mode"], "thinking")
+        response = self.client.post(
+            "/realtime/turn", json={"user": "Hello", "assistant": "Hey there."}
+        )
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post("/realtime/end")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(runtime.state.snapshot()["wake_detected"])
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "ROBOT_REALTIME": "1"})
+    @patch("brain.server.transcribe_command", return_value="turn the face blue")
+    @patch("brain.server.wake_listener")
+    @patch("brain.server.httpx.post")
+    def test_realtime_token_uses_ephemeral_client_secret_flow(self, post, listener, transcribe):
+        upstream = Mock(status_code=200, is_error=False)
+        upstream.json.return_value = {"value": "ek_test"}
+        post.return_value = upstream
+        listener.take_pending_command.return_value = b"post-wake-wav"
+        response = self.client.post("/realtime/token", json={"client_id": "face-test"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["value"], "ek_test")
+        self.assertEqual(response.get_json()["robot_client_id"], "face-test")
+        self.assertEqual(response.get_json()["initial_message"], "turn the face blue")
+        transcribe.assert_called_once_with(b"post-wake-wav")
+        self.assertIn("/v1/realtime/client_secrets", post.call_args.args[0])
+        self.assertIn("session", post.call_args.kwargs["json"])
+
+    @patch("brain.server.get_openai_client")
+    def test_handoff_transcription_removes_only_leading_wake_phrase(self, client):
+        client.return_value.audio.transcriptions.create.return_value.text = (
+            "Hey Herman, what have you been doing today?"
+        )
+        self.assertEqual(
+            transcribe_command(b"wake-and-command-wav"),
+            "what have you been doing today?",
+        )
+
+        client.return_value.audio.transcriptions.create.return_value.text = (
+            "Tell me why Herman likes Randy"
+        )
+        self.assertEqual(
+            transcribe_command(b"ordinary-command-wav"),
+            "Tell me why Herman likes Randy",
+        )
+
+    def test_realtime_watchdog_recovers_abandoned_browser_session(self):
+        runtime.state.update(
+            listening=False, wake_detected=True, wake_paused=True, mode="thinking"
+        )
+        arm_realtime_guard(0.01)
+        time.sleep(0.04)
+        state = runtime.state.snapshot()
+        self.assertTrue(state["listening"])
+        self.assertFalse(state["wake_paused"])
+        self.assertFalse(state["wake_detected"])
+        self.assertEqual(state["mode"], "idle")
+
+    def test_realtime_heartbeat_is_available(self):
+        self.assertEqual(self.client.post("/realtime/heartbeat").status_code, 200)
 
 
 if __name__ == "__main__":
